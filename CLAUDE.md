@@ -14,7 +14,7 @@
 - **Billing**: 必ず Max サブスクリプション経由 — `claude -p` 不使用、`ANTHROPIC_API_KEY` 不使用、`~/.claude/.credentials.json` の OAuth に依存。
 - **Concurrency**: 同一プロセス内 1 worker = 1 claude TUI = 同時 1 ターン（直列）。並列化は worker 増設で対応する設計。
 - **Auth context**: ホストの `claude` バイナリが既に Max でログイン済みである必要がある。
-- **Single host**: 現状は WebIF と ht-mcp と claude が同一ホスト＝同一ファイルシステム。HT-PROTOCOL §7 はこの前提のもとで成立している。
+- **Single host**: WebIF と ht-mcp と claude は同一ホスト＝同一ファイルシステムを共有する前提。同一ホスト上の多重インスタンス運用は `PORT` と `TURNS_DIR` を変えれば可能（v0.1 段階1で env 化済み）。HT-PROTOCOL §7 はこの前提のもとで成立している。
 <!-- GSD:project-end -->
 
 <!-- GSD:stack-start source:codebase/STACK.md -->
@@ -34,7 +34,7 @@
 - `tokio` 1 (feature `full`) — Async runtime for HTTP, child-process I/O, channels (`tokio::sync::mpsc` at `src/main.rs:539`), and `Mutex` (`src/main.rs:538`).
 - `hyper` / `tower` — Pulled in transitively by `axum` (see `Cargo.lock:33-83`).
 - None. No `tests/`, `benches/`, no `#[cfg(test)]` blocks in `src/main.rs`, no `[dev-dependencies]` in `Cargo.toml`.
-- `cargo` only. No `Makefile`, no `justfile`, no CI configuration files (`.github/`, `.gitlab-ci.yml`, etc.) present.
+- `cargo` + `just` (see `webif/justfile`). CI configuration lives at repo root (`.github/workflows/`).
 ## Key Dependencies
 - `tokio` 1 (features: `full`) — Async runtime, process spawning (`tokio::process::Command` at `src/main.rs:56`), file I/O (`tokio::fs` at `src/main.rs:387`), timers, channels.
 - `axum` 0.8 — HTTP server framework; `Router`, `State`, `Json`, `Path` extractors used throughout the HTTP-layer section (`src/main.rs:371-519`).

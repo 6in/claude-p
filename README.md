@@ -68,6 +68,29 @@ cargo build --release
 
 4. バインドアドレスは `127.0.0.1:8080`（ループバック専用）。外部から接続したい場合は SSH トンネルやリバースプロキシを使用すること。
 
+### 複数インスタンス運用
+
+同一ホストで複数の WebIF を走らせる場合は `PORT` と `TURNS_DIR` を分けて起動する:
+
+```bash
+PORT=8081 TURNS_DIR=./turns-8081 cargo run --release
+PORT=8082 TURNS_DIR=./turns-8082 cargo run --release
+```
+
+既定値はそれぞれ `8080` と `./turns`。`.env` でも設定可能（`.env.example` を参照）。
+
+## 動作確認
+
+依存 (`ht-mcp` / `claude` CLI) が揃っているかと、curl で 1 ターン回せるかを
+スモークテストで一括確認できる:
+
+```bash
+./scripts/smoke.sh
+```
+
+サーバ起動 → `POST /prompt` (wait:true) → 結果表示 → 後片付けまでを 1
+コマンドで実行する。失敗時はビルドログの末尾 40 行を stderr に出力する。
+
 ## API
 
 すべてのエンドポイントは `http://127.0.0.1:8080` で待ち受ける。レスポンスは JSON。
@@ -183,6 +206,8 @@ curl -s -X POST http://127.0.0.1:8080/restart
 | 変数 | 既定値 | 説明 |
 |------|--------|------|
 | `HT_MCP_PATH` | `ht-mcp` | `ht-mcp` バイナリのパス。未設定なら PATH 上を探索 |
+| `PORT` | `8080` | HTTP listener のポート番号。多重起動時はインスタンス毎に変える |
+| `TURNS_DIR` | `./turns` | ターン成果物の出力先ディレクトリ。多重起動時は PORT と一緒に分離する |
 
 設定の優先順位: **実環境変数 > `.env` > 既定値**（`dotenvy` の標準動作）。`.env.example` をコピーして `.env` を作成し、必要に応じて編集すること。
 
