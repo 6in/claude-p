@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{mpsc, Mutex};
 
-use ht_webif::config::load_ht_mcp_path;
+use ht_webif::config::{load_ht_mcp_path, load_port, load_turns_dir};
 use ht_webif::http::{build_router, AppState};
 use ht_webif::turn::{worker_loop, Job};
 use ht_webif::worker::Worker;
@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
     println!("claude セッション: {}", worker.session_id);
 
     // 2. ターンディレクトリ
-    let turns_dir = std::env::current_dir()?.join("turns");
+    let turns_dir = load_turns_dir()?;
     tokio::fs::create_dir_all(&turns_dir).await?;
     println!("ターンディレクトリ: {}", turns_dir.display());
 
@@ -37,8 +37,9 @@ async fn main() -> Result<()> {
     });
     let app = build_router(state);
 
-    let addr = "127.0.0.1:8080";
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let port = load_port()?;
+    let addr = format!("127.0.0.1:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("WebIF 起動: http://{addr}");
     println!("  POST /prompt       {{\"prompt\":\"...\"}}             → 非同期、turn_id を即返す");
     println!(
