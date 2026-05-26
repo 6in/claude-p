@@ -1,0 +1,32 @@
+# Rust ビルド成果物
+# リポジトリルート直下の target（将来 workspace root にビルドが出た場合）
+/target/
+#  サブクレートのビルド出力（cargo build の既定出力先）
+target/
+# Makefile のクロスビルド成果物（cross build → cp → dist/）
+dist/
+# rustfmt のバックアップファイル
+**/*.rs.bk
+# 注: Cargo.lock はバイナリクレートのためトラックする（ignore しない）
+
+# HT-PROTOCOL ランタイム成果物
+# prompt/result/status ターンファイルが蓄積するディレクトリ（HT-PROTOCOL v1.1 §6）
+# バイナリの cwd 配下に作られる:  から起動すれば turns/、親から起動すれば /turns/。
+/turns/
+turns/
+
+# 秘密情報
+# OAuth トークン・環境変数など機密を含む実設定ファイル（サンプルテンプレートはトラックする）
+# .env は .env にも親 /.env にも置かれうるので両方無視する。
+**/.env
+.env.local
+
+# IDE 生成物
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS 生成物
+.DS_Store
+Thumbs.db
