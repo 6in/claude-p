@@ -91,6 +91,59 @@ PORT=8082 TURNS_DIR=./turns-8082 cargo run --release
 サーバ起動 → `POST /prompt` (wait:true) → 結果表示 → 後片付けまでを 1
 コマンドで実行する。失敗時はビルドログの末尾 40 行を stderr に出力する。
 
+## claude-p — curl 不要の薄いラッパ
+
+`POST /prompt` を毎回 curl で書く代わりに、`claude-p {port} {prompt}` 一発でターン投入＋結果取得まで完結させるラッパスクリプト。指定ポートにサーバが居なければ自動でデーモン化起動し、既に居れば再利用する。
+
+### 基本使い方
+
+```bash
+# ポート 8080 に投入（サーバが居なければ自動起動してデーモン化）
+./scripts/claude-p 8080 "Rust とは何か 100 字で教えて"
+
+# 長文プロンプトを stdin から渡す
+cat my-prompt.txt | ./scripts/claude-p 8080 -
+```
+
+### 動作の詳細
+
+- サーバ liveness probe を実行する。応答すれば再利用、無ければ `nohup cargo run --release` で起動して `disown` する
+- PID は `/tmp/ht-webif-${PORT}.pid`、ログは `/tmp/ht-webif-${PORT}.log` に書かれる
+- 各ポート専用に `webif/turns-${PORT}/` ディレクトリを `TURNS_DIR` として使う（ポート間でターン成果物が混ざらない）
+- 投入は非同期（`wait: true` を使わない）。30 秒間隔で `GET /turns/{turn_id}` をポーリング、上限 20 回 = 10 分
+- 成功時は **stdout に result 本文のみ**、stderr に進捗ログを出す（パイプ可能）
+
+### サブコマンド
+
+```bash
+# 稼働状況確認
+./scripts/claude-p status 8080
+
+# 停止（SIGTERM → 5秒待機 → SIGKILL）
+./scripts/claude-p stop 8080
+```
+
+### 注意点
+
+- サーバはラッパが exit した後もバックグラウンドで稼働を継続する。明示的に止めたい時は `claude-p stop {port}` を使う
+- Ctrl-C はラッパだけを止め、ターン処理中のサーバは継続する（curl で叩いている時と同じ挙動）
+- `claude` CLI が Max でログイン済みであることは `./scripts/smoke.sh` と同様の前提
+
+## CORS
+
+ht-webif の HTTP API は **既定で全オリジン許可**（フルパーミッシブ `*`）。Web フロントエンドや
+別オリジンのページから直接叩ける。絞り込みたい場合は `CORS_ORIGINS` 環境変数にカンマ区切りで
+オリジンを指定する:
+
+```bash
+CORS_ORIGINS=http://localhost:3000 cargo run --release
+# 複数オリジン
+CORS_ORIGINS=http://localhost:3000,https://example.com cargo run --release
+```
+
+許可メソッドは `GET, POST, OPTIONS`、許可ヘッダは `Content-Type`。Cookie / 認証情報は
+扱わないため `Access-Control-Allow-Credentials` は意図的に有効化していない。
+
 ## API
 
 すべてのエンドポイントは `http://127.0.0.1:8080` で待ち受ける。レスポンスは JSON。
@@ -208,6 +261,7 @@ curl -s -X POST http://127.0.0.1:8080/restart
 | `HT_MCP_PATH` | `ht-mcp` | `ht-mcp` バイナリのパス。未設定なら PATH 上を探索 |
 | `PORT` | `8080` | HTTP listener のポート番号。多重起動時はインスタンス毎に変える |
 | `TURNS_DIR` | `./turns` | ターン成果物の出力先ディレクトリ。多重起動時は PORT と一緒に分離する |
+| `CORS_ORIGINS` | `*` | CORS 許可オリジン（カンマ区切り）。`*` で全許可。Web フロントから直接叩く場合に絞り込める |
 
 設定の優先順位: **実環境変数 > `.env` > 既定値**（`dotenvy` の標準動作）。`.env.example` をコピーして `.env` を作成し、必要に応じて編集すること。
 
