@@ -38,3 +38,24 @@ pub fn load_turns_dir() -> anyhow::Result<std::path::PathBuf> {
             .join("turns")),
     }
 }
+
+/// CORS_ORIGINS 環境変数を読む。カンマ区切りリスト、または `*` でワイルドカード。
+/// 未設定なら既定値 `vec!["*"]` (フルパーミッシブ)。
+/// 優先順位: 実環境変数 CORS_ORIGINS > .env の値 > 既定値。
+pub fn load_cors_origins() -> Vec<String> {
+    match std::env::var("CORS_ORIGINS") {
+        Ok(s) => {
+            let origins: Vec<String> = s
+                .split(',')
+                .map(|o| o.trim().to_string())
+                .filter(|o| !o.is_empty())
+                .collect();
+            if origins.is_empty() {
+                vec!["*".to_string()]
+            } else {
+                origins
+            }
+        }
+        Err(_) => vec!["*".to_string()],
+    }
+}

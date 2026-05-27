@@ -3,7 +3,7 @@
 use anyhow::Result;
 use axum::{
     extract::{Path as AxumPath, State},
-    http::StatusCode,
+    http::{header, HeaderValue, Method, StatusCode},
     routing::{get, post},
     Json, Router,
 };
@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::mcp::{Mcp, McpClient, Restartable};
 use crate::turn::{build_prompt_body, read_turn, Job};
@@ -167,12 +168,35 @@ async fn restart_handler<M: Mcp + Restartable + Send + 'static>(
 /// 型パラメータ M: Restartable を要求するのは restart_handler が ht-mcp 再起動に
 /// trait Restartable を使うため。本番（M = McpClient）も テスト（FakeMcp）も Restartable を
 /// 実装すれば build_router をそのまま使える。
-pub fn build_router<M: Mcp + Restartable + Send + 'static>(state: Arc<AppState<M>>) -> Router {
+///
+/// CORS_ORIGINS で絞り込み可、既定は全許可 (`*`)。
+pub fn build_router<M: Mcp + Restartable + Send + 'static>(
+    state: Arc<AppState<M>>,
+    cors_origins: Vec<String>,
+) -> Router {
+    // cors_origins に "*" が含まれる場合はワイルドカード全許可、それ以外は明示オリジンのみ許可
+    let cors = if cors_origins.iter().any(|o| o == "*") {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers([header::CONTENT_TYPE])
+    } else {
+        let headers: Vec<HeaderValue> = cors_origins
+            .iter()
+            .filter_map(|o| HeaderValue::from_str(o).ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(headers)
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers([header::CONTENT_TYPE])
+    };
+
     Router::new()
         .route("/prompt", post(prompt_handler::<M>))
         .route("/turns/{turn_id}", get(turn_handler::<M>))
         .route("/command", post(command_handler::<M>))
         .route("/restart", post(restart_handler::<M>))
+        .layer(cors)
         .with_state(state)
 }
 
@@ -221,7 +245,7 @@ mod tests {
     async fn turn_handler_rejects_path_traversal_via_percent_encoded_slash() {
         let dir = tempdir().unwrap();
         let (state, _job_rx) = build_test_state(dir.path().to_path_buf());
-        let app = build_router(state);
+        let app = build_router(state, vec!["*".to_string()]);
 
         let resp = app
             .oneshot(
@@ -250,7 +274,7 @@ mod tests {
     async fn turn_handler_rejects_ascii_letters_in_turn_id() {
         let dir = tempdir().unwrap();
         let (state, _job_rx) = build_test_state(dir.path().to_path_buf());
-        let app = build_router(state);
+        let app = build_router(state, vec!["*".to_string()]);
 
         let resp = app
             .oneshot(
@@ -290,7 +314,7 @@ mod tests {
             .unwrap();
 
         let (state, _job_rx) = build_test_state(dir.path().to_path_buf());
-        let app = build_router(state);
+        let app = build_router(state, vec!["*".to_string()]);
 
         let resp = app
             .oneshot(
@@ -312,5 +336,90 @@ mod tests {
         assert_eq!(v.get("turn_id").and_then(Value::as_str), Some(id));
         assert_eq!(v.get("status").and_then(Value::as_str), Some("done"));
         assert_eq!(v.get("result").and_then(Value::as_str), Some("ok"));
+    }
+
+    // ── CORS: preflight (OPTIONS) で Access-Control-Allow-Origin が返ること ──
+    //
+    // preflight (OPTIONS) で Access-Control-Allow-Origin が返ることをリグレッション保護。
+    // 既定設定（vec!["*"]）で任意のオリジンの OPTIONS リクエストが 2xx を返し、
+    // access-control-allow-origin ヘッダが付くことを確認する。
+    #[tokio::test]
+    async fn cors_preflight_allows_any_origin_under_default_config() {
+        let dir = tempdir().unwrap();
+        let (state, _job_rx) = build_test_state(dir.path().to_path_buf());
+        let app = build_router(state, vec!["*".to_string()]);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/prompt")
+                    .header("Origin", "https://example.com")
+                    .header("Access-Control-Request-Method", "POST")
+                    .header("Access-Control-Request-Headers", "content-type")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // preflight は 2xx で応答すること
+        assert!(
+            resp.status().is_success(),
+            "preflight は 2xx で応答すること (実際: {})",
+            resp.status()
+        );
+
+        // access-control-allow-origin ヘッダが存在すること（値は "*" または "https://example.com" を許容）
+        let allow_origin = resp
+            .headers()
+            .get("access-control-allow-origin")
+            .expect("access-control-allow-origin ヘッダが存在すること");
+        let allow_origin_str = allow_origin.to_str().unwrap();
+        assert!(
+            allow_origin_str == "*" || allow_origin_str == "https://example.com",
+            "access-control-allow-origin は '*' または 'https://example.com' であること (実際: {allow_origin_str})"
+        );
+    }
+
+    // ── CORS: actual request（非 preflight）でも Allow-Origin ヘッダが付くことを確認 ──
+    //
+    // actual request（非 preflight）でも Allow-Origin ヘッダが付くことを確認。
+    // turn_id "abc" は whitelist で 400 になる既存挙動が壊れていないことも兼ねて確認する。
+    #[tokio::test]
+    async fn cors_actual_request_includes_allow_origin_header() {
+        let dir = tempdir().unwrap();
+        let (state, _job_rx) = build_test_state(dir.path().to_path_buf());
+        let app = build_router(state, vec!["*".to_string()]);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/turns/abc")
+                    .header("Origin", "https://example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // turn_id "abc" は英字を含むため 400 で弾かれること（既存挙動リグレッション確認）
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "英字混入 turn_id は 400 で弾かれること"
+        );
+
+        // actual request でも access-control-allow-origin ヘッダが付くこと
+        let allow_origin = resp
+            .headers()
+            .get("access-control-allow-origin")
+            .expect("actual request でも access-control-allow-origin ヘッダが存在すること");
+        let allow_origin_str = allow_origin.to_str().unwrap();
+        assert!(
+            allow_origin_str == "*" || allow_origin_str == "https://example.com",
+            "access-control-allow-origin は '*' または 'https://example.com' であること (実際: {allow_origin_str})"
+        );
     }
 }

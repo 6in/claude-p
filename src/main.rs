@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{mpsc, Mutex};
 
-use ht_webif::config::{load_ht_mcp_path, load_port, load_turns_dir};
+use ht_webif::config::{load_cors_origins, load_ht_mcp_path, load_port, load_turns_dir};
 use ht_webif::http::{build_router, AppState};
 use ht_webif::turn::{worker_loop, Job};
 use ht_webif::worker::Worker;
@@ -35,7 +35,9 @@ async fn main() -> Result<()> {
         turns_dir,
         job_tx,
     });
-    let app = build_router(state);
+    let cors_origins = load_cors_origins();
+    println!("CORS 許可オリジン: {:?}", cors_origins);
+    let app = build_router(state, cors_origins);
 
     let port = load_port()?;
     let addr = format!("127.0.0.1:{port}");
