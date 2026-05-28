@@ -1,0 +1,411 @@
+#!/usr/bin/env bash
+# claude-p — curl 不要の薄い Claude ラッパスクリプト。
+#
+# 使い方:
+#   claude-p <port> <prompt>      通常形式: ポートを指定してプロンプトを投入
+#   claude-p <port> -             stdin 形式: プロンプトを標準入力から読む
+#   claude-p stop <port>          サーバを停止する（SIGTERM → 5秒待機 → SIGKILL）
+#   claude-p status <port>        サーバの稼働状況を表示する
+#
+# 動作:
+#   - 指定ポートに ht-webif が居なければ自動でデーモン化して起動する
+#   - 既にサーバが居れば再利用する
+#   - ターンは非同期投入（POST /prompt）し、30秒間隔で最大20回ポーリングする
+#   - 成功時は stdout に result 本文のみ、stderr に進捗ログを出す（パイプ可能）
+#
+# per-port 規約:
+#   PID:      /tmp/ht-webif-${PORT}.pid
+#   LOG:      /tmp/ht-webif-${PORT}.log
+#   TURNS:    ${WEBIF_DIR}/turns-${PORT}/   （ポート間でターン成果物が混ざらない）
+
+set -euo pipefail
+
+# --- パス定数 ---
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WEBIF_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# --- ログヘルパー ---
+log() {
+    echo "[claude-p] $*" >&2
+}
+
+# --- 使い方 ---
+usage() {
+    echo "[claude-p] 使い方:" >&2
+    echo "  $(basename "$0") <port> <prompt>   プロンプト投入（サーバが居なければ自動起動）" >&2
+    echo "  $(basename "$0") <port> -           stdin からプロンプトを読む" >&2
+    echo "  $(basename "$0") stop <port>        サーバを停止する" >&2
+    echo "  $(basename "$0") status <port>      サーバの稼働状況を表示する" >&2
+    exit 1
+}
+
+# --- ツール存在チェックヘルパー ---
+require_tool() {
+    local cmd="$1"
+    local msg="$2"
+    local hint="$3"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        log "ERROR: $msg"
+        log "  $hint"
+        exit 1
+    fi
+}
+
+# --- ツール検出 ---
+require_tool "curl" \
+    "curl が見つかりません。" \
+    "パッケージマネージャで curl をインストールしてください。"
+
+# JSON エンコーダの検出（jq 優先、なければ python3）
+JSON_ENCODER=""
+if command -v jq >/dev/null 2>&1; then
+    JSON_ENCODER="jq"
+elif command -v python3 >/dev/null 2>&1; then
+    JSON_ENCODER="python3"
+else
+    log "ERROR: jq か python3 のどちらかが必要です。"
+    log "  jq または python3 をインストールしてください。"
+    exit 1
+fi
+
+# --- JSON ヘルパー ---
+
+# json_encode_prompt: 第1引数の文字列を {"prompt": "..."} JSON に変換する
+json_encode_prompt() {
+    local prompt="$1"
+    case "$JSON_ENCODER" in
+        jq)
+            jq -n --arg p "$prompt" '{"prompt": $p}'
+            ;;
+        python3)
+            printf '%s' "$prompt" | python3 -c 'import sys, json; print(json.dumps({"prompt": sys.stdin.read()}))'
+            ;;
+    esac
+}
+
+# json_get_field: 第1引数のJSON文字列から第2引数のフィールド値を取り出す
+json_get_field() {
+    local json="$1"
+    local field="$2"
+    case "$JSON_ENCODER" in
+        jq)
+            echo "$json" | jq -r ".${field} // empty"
+            ;;
+        python3)
+            echo "$json" | python3 -c "import sys, json; d=json.loads(sys.stdin.read()); print(d.get('${field}', ''))"
+            ;;
+    esac
+}
+
+# --- Liveness probe ---
+# is_server_up: サーバが応答していれば 0、そうでなければ非0を返す
+# /turns/0 は 400 を返すが、HTTP レスポンスが返れば curl は exit 0 → 応答検出に使う
+is_server_up() {
+    curl -s -o /dev/null --max-time 2 "${BASE_URL}/turns/0" 2>/dev/null
+}
+
+# --- Auto-start ---
+# ensure_server_running: サーバが起動していなければデーモン化して起動する
+ensure_server_running() {
+    # すでに応答していれば再利用
+    if is_server_up; then
+        log "既存サーバを再利用: ${BASE_URL}"
+        return 0
+    fi
+
+    # PID ファイルが存在する場合
+    if [[ -f "$PID_FILE" ]]; then
+        local pid
+        pid=$(cat "$PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            # プロセスは生きているがポートに応答しない
+            log "ERROR: PID ${pid} は生存しているがポート ${PORT} に応答しません。手動で確認してください。"
+            log "  PID ファイル: ${PID_FILE}"
+            log "  ログファイル: ${LOG_FILE}"
+            exit 1
+        else
+            # プロセスは死んでいる → 古い PID ファイルを削除して再起動
+            log "古い PID ファイルを削除して再起動します (旧 pid=${pid})"
+            rm -f "$PID_FILE"
+        fi
+    fi
+
+    # サーバを spawn してデーモン化
+    log "ht-webif を起動中... (port=${PORT}, log=${LOG_FILE})"
+    (
+        cd "$WEBIF_DIR"
+        nohup env PORT="${PORT}" TURNS_DIR="${TURNS_DIR_PATH}" cargo run --release >"${LOG_FILE}" 2>&1 &
+        local pid=$!
+        echo "$pid" > "${PID_FILE}"
+        disown "$pid"
+    )
+
+    # PID ファイルが書かれるまで少し待つ
+    local pid=""
+    local wait_pid=0
+    while [[ $wait_pid -lt 5 ]]; do
+        if [[ -f "$PID_FILE" ]]; then
+            pid=$(cat "$PID_FILE")
+            break
+        fi
+        sleep 1
+        (( wait_pid++ )) || true
+    done
+
+    if [[ -z "$pid" ]]; then
+        log "ERROR: PID ファイルが作成されませんでした"
+        exit 1
+    fi
+
+    # Readiness 待機（最大 60 秒、1秒間隔）
+    local i
+    for i in $(seq 1 60); do
+        # 早期死亡検知
+        if ! kill -0 "$pid" 2>/dev/null; then
+            log "ERROR: cargo run プロセスが終了しました (ビルド失敗かポート競合の可能性)"
+            if [[ -f "$LOG_FILE" ]]; then
+                log "ログ末尾 40 行:"
+                tail -n 40 "$LOG_FILE" >&2
+            fi
+            rm -f "$PID_FILE"
+            exit 1
+        fi
+
+        if is_server_up; then
+            log "サーバ起動完了 (pid=${pid})"
+            return 0
+        fi
+
+        # 5 秒ごとに進捗を表示
+        if (( i % 5 == 0 )); then
+            log "サーバ起動待機中 (${i}s/60s)..."
+        fi
+        sleep 1
+    done
+
+    log "ERROR: 60 秒待ってもサーバが応答しませんでした"
+    if [[ -f "$LOG_FILE" ]]; then
+        log "ログ末尾 40 行:"
+        tail -n 40 "$LOG_FILE" >&2
+    fi
+    kill -TERM "$pid" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    exit 1
+}
+
+# --- Submit + poll ---
+# submit_and_poll: プロンプトを投入してポーリングで結果を待つ
+submit_and_poll() {
+    local req
+    req=$(json_encode_prompt "$PROMPT")
+
+    local resp
+    if ! resp=$(curl -s --max-time 30 -X POST "${BASE_URL}/prompt" \
+        -H 'Content-Type: application/json' \
+        --data-binary "$req"); then
+        log "ERROR: POST /prompt が失敗しました"
+        exit 1
+    fi
+
+    local turn_id
+    turn_id=$(json_get_field "$resp" turn_id)
+    if [[ -z "$turn_id" ]]; then
+        log "ERROR: turn_id が取れませんでした。レスポンス: ${resp}"
+        exit 1
+    fi
+
+    log "ターン投入: turn_id=${turn_id}"
+
+    # ポーリングループ
+    local max_polls=20
+    local interval=30
+    local i
+    for i in $(seq 1 $max_polls); do
+        sleep $interval
+
+        local elapsed=$(( i * interval ))
+        local turn_resp=""
+        if ! turn_resp=$(curl -s --max-time 10 "${BASE_URL}/turns/${turn_id}" 2>/dev/null); then
+            log "警告: GET /turns/${turn_id} が失敗しました（一時的な不調の可能性）。リトライします..."
+            continue
+        fi
+
+        local status
+        status=$(json_get_field "$turn_resp" status)
+
+        case "$status" in
+            done|completed)
+                local result
+                result=$(json_get_field "$turn_resp" result)
+                printf '%s\n' "$result"
+                log "完了 (経過 ${elapsed}s)"
+                return 0
+                ;;
+            failed|timeout)
+                log "ERROR: ターン失敗 (status=${status}, 経過 ${elapsed}s)"
+                echo "$turn_resp" >&2
+                return 1
+                ;;
+            *)
+                log "polling... (経過 ${elapsed}s, status=${status:-unknown})"
+                ;;
+        esac
+    done
+
+    log "ERROR: ポーリング上限 (${max_polls} 回 = $(( max_polls * interval ))s) を超えました"
+    exit 1
+}
+
+# --- Stop サブコマンド ---
+cmd_stop() {
+    local port="$1"
+    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+        log "ERROR: ポート番号が不正です: ${port}"
+        usage
+    fi
+
+    local pid_file="/tmp/ht-webif-${port}.pid"
+    local log_file="/tmp/ht-webif-${port}.log"
+
+    if [[ ! -f "$pid_file" ]]; then
+        log "PID ファイルが見つかりません: ${pid_file}"
+        exit 0
+    fi
+
+    local pid
+    pid=$(cat "$pid_file")
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        log "プロセスは既に停止しています (pid=${pid})"
+        rm -f "$pid_file"
+        exit 0
+    fi
+
+    log "停止中... (pid=${pid})"
+    kill -TERM "$pid" 2>/dev/null || true
+
+    # 最大 5 秒待つ
+    local i
+    for i in 1 2 3 4 5; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+
+    # まだ生きていれば強制終了
+    if kill -0 "$pid" 2>/dev/null; then
+        log "SIGKILL を送信します (pid=${pid})"
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+
+    rm -f "$pid_file"
+    log "停止しました (pid=${pid})"
+    exit 0
+}
+
+# --- Status サブコマンド ---
+cmd_status() {
+    local port="$1"
+    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+        log "ERROR: ポート番号が不正です: ${port}"
+        usage
+    fi
+
+    local base_url="http://127.0.0.1:${port}"
+    local pid_file="/tmp/ht-webif-${port}.pid"
+    local log_file="/tmp/ht-webif-${port}.log"
+    local turns_dir="${WEBIF_DIR}/turns-${port}"
+
+    echo "PORT:      ${port}"
+    echo "BASE_URL:  ${base_url}"
+    echo "PID_FILE:  ${pid_file}"
+    echo "LOG_FILE:  ${log_file}"
+    echo "TURNS_DIR: ${turns_dir}"
+
+    # サーバ応答確認
+    local server_up=false
+    if curl -s -o /dev/null --max-time 2 "${base_url}/turns/0" 2>/dev/null; then
+        echo "SERVER:    応答あり (UP)"
+        server_up=true
+    else
+        echo "SERVER:    応答なし (DOWN)"
+    fi
+
+    # PID 情報
+    if [[ -f "$pid_file" ]]; then
+        local pid
+        pid=$(cat "$pid_file")
+        echo "PID:       ${pid}"
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "PROCESS:   生存"
+        else
+            echo "PROCESS:   死亡（PID ファイルが残存）"
+        fi
+    else
+        echo "PID:       (PID ファイルなし)"
+    fi
+
+    # ログ末尾
+    if [[ -f "$log_file" ]]; then
+        echo ""
+        echo "--- ログ末尾 5 行 (${log_file}) ---"
+        tail -n 5 "$log_file"
+    fi
+
+    if [[ "$server_up" == "true" ]]; then
+        exit 0
+    else
+        exit 1
+    fi
+}
+
+# --- 引数パース ---
+if [[ $# -lt 2 ]]; then
+    usage
+fi
+
+# サブコマンド判定
+case "$1" in
+    stop)
+        cmd_stop "$2"
+        ;;
+    status)
+        cmd_status "$2"
+        ;;
+    *)
+        # 通常フロー: 第1引数はポート番号
+        if [[ ! "$1" =~ ^[0-9]+$ ]]; then
+            log "ERROR: 第1引数はポート番号か stop/status サブコマンドである必要があります: $1"
+            usage
+        fi
+        PORT="$1"
+        shift
+        ;;
+esac
+
+# per-port パス定数
+BASE_URL="http://127.0.0.1:${PORT}"
+PID_FILE="/tmp/ht-webif-${PORT}.pid"
+LOG_FILE="/tmp/ht-webif-${PORT}.log"
+TURNS_DIR_PATH="${WEBIF_DIR}/turns-${PORT}"
+
+# プロンプト取得
+if [[ $# -eq 1 ]] && [[ "$1" == "-" ]]; then
+    # stdin から読む
+    PROMPT="$(cat)"
+else
+    PROMPT="$*"
+fi
+
+if [[ -z "$PROMPT" ]]; then
+    log "ERROR: プロンプトが空です"
+    usage
+fi
+
+# --- Trap 設定（サーバは kill しない） ---
+trap 'log "Ctrl-C を受信。サーバはバックグラウンドで稼働を継続します"; exit 130' INT TERM
+
+# --- メインフロー ---
+ensure_server_running
+submit_and_poll

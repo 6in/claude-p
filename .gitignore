@@ -13,7 +13,8 @@ dist/
 # prompt/result/status ターンファイルが蓄積するディレクトリ（HT-PROTOCOL v1.1 §6）
 # バイナリの cwd 配下に作られる:  から起動すれば turns/、親から起動すれば /turns/。
 /turns/
-turns/
+turns*/
+
 
 # 秘密情報
 # OAuth トークン・環境変数など機密を含む実設定ファイル（サンプルテンプレートはトラックする）
