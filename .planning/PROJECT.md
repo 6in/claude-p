@@ -8,6 +8,18 @@
 
 **`-p` を避けつつ curl で Claude を実行できる。** これがすべての設計判断の原点。サブスクリプション課金の維持、対話型 TUI の駆動、ファイル経由の入出力、自己回復機構 — どれもこの一点を成立させるために存在する。
 
+## Current Milestone: v2.0 マルチエージェント対応
+
+**Goal:** ht-webif を Claude 専用から脱却させ、エージェントプロファイル（設定ファイル）で任意の対話型 CLI エージェント（Codex CLI / OpenCode / 将来の Gemini CLI 等）を駆動できるようにし、多重インスタンスによる並列オーケストレーションの土台を作る。
+
+**Target features:**
+
+- エージェントプロファイル機構 — 設定ファイル（`agents/*.toml` 等）で spawn コマンド・引数・ready 検知・clear 手順（`/clear` vs `/new` 等）を定義。コード変更なしで新エージェント追加可能。Claude 自身も最初のプロファイルとして再定義
+- インスタンス単位のエージェント選択 — 起動時に `AGENT=codex` 等で固定。1プロセス=1エージェント。複数エージェントは PORT 違いの多重インスタンスで並列駆動
+- Codex CLI 対応 — プロファイル経由で Codex TUI を駆動し、ターンファイル方式で結果取得
+- OpenCode 対応 — 同上
+- 並列駆動の土台 — 複数インスタンスを同時に立ち上げ curl で個別に叩ける状態まで。組み合わせ（ルーティング・パイプライン）は呼び出し側の責務
+
 ## Requirements
 
 ### Validated
@@ -38,12 +50,20 @@
 
 ### Active
 
-<!-- これから取り組む。Phase 3 で REPO-06/07/08（TEST-*/TOOL-*）が完了。次は OPS / SEC / SCALE 等の運用系。 -->
+<!-- v2.0 マルチエージェント対応のスコープ。詳細な REQ-ID は REQUIREMENTS.md で定義。 -->
+
+- [ ] エージェントプロファイル機構（設定ファイル定義、コード変更なしで新エージェント追加）
+- [ ] インスタンス単位のエージェント選択（起動時固定、1プロセス=1エージェント）
+- [ ] Codex CLI 対応（プロファイル経由で駆動、ターンファイル方式で結果取得）
+- [ ] OpenCode 対応（同上）
+- [ ] 多重インスタンスによる並列駆動の土台
+
+<!-- v1.0 から繰延（v2.0 スコープ外、将来マイルストーン候補） -->
 
 - [ ] **OPS-01**: `turns/` のローテーション/アーカイブ運用（hot ディレクトリと archive を分離）
 - [ ] **OPS-02**: 構造化ロギング（tracing crate）と最低限の観測性
 - [ ] **SEC-01**: HTTP エンドポイントの認証（最低限 bearer token、ローカル外公開時の前提）
-- [ ] **SCALE-01**: 並列ワーカー（複数 ht-mcp / claude セッション）
+- [ ] **SCALE-01**: 並列ワーカー（複数 ht-mcp / claude セッション）— v2.0 の多重インスタンス並列駆動が部分的に代替。同一プロセス内並列は引き続き将来分
 - [ ] **DEPLOY-01**: Docker 化（claude を含むコンテナ + 認証情報マウント）
 
 ### Out of Scope
@@ -55,6 +75,8 @@
 - **claude TUI の機能拡張** — 同上。Claude Code は別プロジェクト。本 WebIF は薄いブリッジに徹する。
 - **マルチホスト分散** — 現状のスコープ外。単一ホスト前提。将来 SCALE-01 を超えて必要になったら別途検討。
 - **GUI / Web UI（フロントエンド）** — HTTP/JSON API までが本プロジェクトの責務。UI は別レイヤ（呼び出し側）で。
+- **WebIF 内のエージェント間ルーティング/ファンアウト/パイプライン** — v2.0 は並列駆動の土台（多重インスタンス + プロファイル）まで。エージェントの組み合わせ方は呼び出し側（シェルスクリプト等）の責務。
+- **リクエスト単位のエージェント切替（`POST /prompt {"agent":...}`）** — エージェント選択はインスタンス単位（起動時固定）とユーザが判断。1プロセス=1エージェントの単純さを維持。
 
 ## Context
 
@@ -115,4 +137,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-10 after v1.0 milestone — マイルストーン「開発リポジトリ整備」をクローズ（3 phases / 13 plans / 11 requirements validated）。繰延 9 件（human UAT 1・verification 1・quick task メタデータ 7）は STATE.md Deferred Items に記録。*
+*Last updated: 2026-06-11 after v2.0 milestone start — マイルストーン「マルチエージェント対応」を開始（エージェントプロファイル機構・Codex CLI / OpenCode 対応・多重インスタンス並列駆動の土台）。*
