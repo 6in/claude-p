@@ -1,87 +1,14 @@
 ---
-gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: マルチエージェント対応
-status: verifying
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-06-11T08:19:57.822Z"
-last_activity: 2026-06-11
-progress:
-  total_phases: 3
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
-  percent: 100
----
-
-# Project State
-
-## Project Reference
-
-See: .planning/PROJECT.md (updated 2026-06-11)
-
-**Core value:** `-p` を避けつつ curl で Claude を実行できる（サブスクリプション課金を維持）— v2.0 でこの仕組みを Claude 以外の対話型 CLI エージェントへ一般化する
-**Current focus:** Phase 04 — agent-profile-abstraction
-
-## Current Position
-
-Phase: 04 (agent-profile-abstraction) — EXECUTING
-Plan: 2 of 2
-Status: Phase complete — ready for verification
-Last activity: 2026-06-11
-
-Progress: [██████████] 100%
-
-## Performance Metrics
-
-**Velocity:**
-
-- Total plans completed: 0 (v2.0); 13 (v1.0 cumulative)
-- Average duration: —
-- Total execution time: 0.0 hours
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 4. Agent Profile Abstraction | TBD | — | — |
-| 5. Codex CLI and OpenCode Validation | TBD | — | — |
-| 6. Multi-Instance Parallel Foundation | TBD | — | — |
-
-**Recent Trend:**
-
-- Last 5 plans: —
-- Trend: — (no data yet)
-
-*Updated after each plan completion*
-| Phase 04-agent-profile-abstraction P02 | 12min | 3 tasks | 6 files |
-
-## Accumulated Context
-
-### Decisions
-
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- [v2.0 roadmap]: 3 phases at coarse granularity — Profile Abstraction → Agent Validation → Parallel Foundation. Order ensures Rust refactor is validated before empirical agent testing, and both agents work before multi-instance tooling.
-- [v2.0 roadmap]: Phase 5 has a research flag — ready_pattern values and output_covenant behavior for Codex/OpenCode must be discovered empirically. Use `/gsd-plan-phase --research-phase 5`.
-- [v2.0 roadmap]: TURNS_DIR default changed to `./turns/<agent-name>/` in Phase 4 to prevent cross-instance collisions from day one (Pitfall 5 from research).
-- [v1.0]: Roadmap structure decisions archived in previous milestone — see milestones/v1.0-ROADMAP.md and v1.0-phases/.
-- [Phase 04]: ---
-
 phase: 04-agent-profile-abstraction
 plan: 02
 subsystem: config
 tags: [rust, agent-profile, mcp, worker, refactor, golden-test]
 
 # Dependency graph
-
 requires:
-
   - phase: 04-01
     provides: "AgentProfile struct, load_agent_profile, agents/claude.toml, load_agent_name/load_agents_dir"
 provides:
-
   - "create_session(cmd) trait method — create_claude_session renamed in trait Mcp, McpClient, FakeMcp"
   - "Worker<M> gains pub profile: AgentProfile field + new/boot/spawn_session/from_parts profile param"
   - "4 ready-pattern sites in worker.rs profile-driven (ready_pattern, startup_timeout_secs)"
@@ -90,15 +17,12 @@ provides:
   - "Golden test build_prompt_body_covenant_matches_v1_output (D-12) fixing v1.0 byte identity"
   - "main.rs: AGENT/AGENTS_DIR startup sequence, [profile] banner, D-16 turns/<agent-name>/ subdir"
   - "README: AGENT/AGENTS_DIR env vars, D-16 TURNS_DIR breaking-change documentation"
-
 affects: [05-agent-validation, future-multi-agent]
 
 # Tech tracking
-
 tech-stack:
   added: []
   patterns:
-
     - "Profile-driven dispatch: worker.profile.{field} drives all hardcode sites; no new constants needed"
     - "Golden test pattern: const EXPECTED captures v1.0 byte string; load_agent_profile loads real TOML; assert_eq! fixes byte identity (D-12)"
     - "fresh_mode match dispatch: 'command'/'respawn'/other→bail covers all current and future modes safely"
@@ -107,7 +31,6 @@ tech-stack:
 key-files:
   created: []
   modified:
-
     - src/mcp.rs
     - src/worker.rs
     - src/turn.rs
@@ -116,7 +39,6 @@ key-files:
     - README.md
 
 key-decisions:
-
   - "D-16 enforced: turns_dir = turns_base.join(&agent_name) — always <TURNS_DIR>/<agent-name>/; http.rs tests bypass this (Pitfall 4 correctly applied)"
   - "Worker.profile accessed as worker.profile.{field} in process_job — no signature change to process_job needed (RESEARCH Open Questions 1 recommendation)"
   - "http.rs prompt_handler: output_covenant fetched via short lock (worker.lock().await / clone / unlock) to avoid holding lock over file I/O"
@@ -124,7 +46,6 @@ key-decisions:
   - "Task 2 includes http.rs build_test_state fix (profile arg to from_parts) so cargo test --lib turn compiles"
 
 patterns-established:
-
   - "Pattern: profile.ready_pattern replaces all 'auto mode' literals; profile.startup_timeout_secs replaces 25s hardcode"
   - "Pattern: profile.turn_timeout_secs replaces TURN_TIMEOUT constant (config.rs constant preserved, turn.rs no longer imports it)"
   - "Pattern: trigger_template.replace(\"{prompt_path}\", ...) and covenant_template.replace(\"{result_path}\", ...) — str::replace only (D-09)"
@@ -132,7 +53,6 @@ patterns-established:
 requirements-completed: [PROF-01, PROF-03, PROF-04, PROF-05, PROF-06]
 
 # Metrics
-
 duration: 12min
 completed: 2026-06-11
 ---
@@ -189,7 +109,6 @@ Each task was committed atomically:
 ### Auto-fixed Issues
 
 **1. [Rule 1 - Bug] Field name discrepancy: profile.cmd vs profile.command**
-
 - **Found during:** Task 1 (cargo build failure)
 - **Issue:** PATTERNS.md showed `profile.cmd` but actual `src/profile.rs` struct has `pub command: Vec<String>`. Using `profile.cmd` caused E0609 compile errors.
 - **Fix:** Used `profile.command` throughout `worker.rs` (3 sites)
@@ -198,7 +117,6 @@ Each task was committed atomically:
 - **Committed in:** a217755 (Task 1 commit)
 
 **2. [Rule 3 - Blocking] main.rs binary fails cargo build before Task 3**
-
 - **Found during:** Task 1 (cargo build shows E0061 for Worker::new missing profile arg)
 - **Issue:** Task 1 acceptance criterion requires `cargo build` exit 0, but Task 3 is where main.rs is fully wired. Binary can't compile with old `Worker::new(ht_mcp_path)` call.
 - **Fix:** Added minimal profile loading stub to main.rs in Task 1 commit (just imports + load_agent_profile + pass to Worker::new, without D-16 turns or startup banner). Task 3 expands to full implementation.
@@ -207,7 +125,6 @@ Each task was committed atomically:
 - **Committed in:** a217755 (Task 1), 5f93c77 (Task 3 full expansion)
 
 **3. [Rule 3 - Blocking] http.rs tests fail `cargo test --lib turn` due to from_parts missing profile arg**
-
 - **Found during:** Task 2 (cargo test --lib turn compile error)
 - **Issue:** Task 2 acceptance criterion requires `cargo test --lib turn` exit 0, but lib compiles http.rs tests which call `from_parts` with 3 args (Task 1 changed it to 4). Also `build_prompt_body` gained a 4th arg.
 - **Fix:** Fixed `build_test_state` in Task 2 commit to pass profile (via `load_agent_profile("claude", Path::new("agents"))`), and fixed `prompt_handler` in http.rs to fetch covenant from worker.
@@ -245,36 +162,3 @@ None - no external service configuration required.
 ---
 *Phase: 04-agent-profile-abstraction*
 *Completed: 2026-06-11*
-
-### Pending Todos
-
-None yet.
-
-### Blockers/Concerns
-
-- Phase 5 is empirically gated: Codex CLI and OpenCode must be installed and authenticated on the host before Phase 5 can be validated. Codex needs `--yolo` trust-dialog suppression confirmed; OpenCode needs `opencode auth login` run beforehand.
-- Phase 5 output covenant compliance is MEDIUM confidence for non-Claude models (GPT-4o/o3 may not reliably follow the file-write instruction — must be tested).
-
-## Deferred Items
-
-Items carried forward from v1.0 close (2026-06-10):
-
-| Category | Item | Status | Deferred At |
-|----------|------|--------|-------------|
-| uat_gap | Phase 03: GitHub CI red/green 挙動確認 1 シナリオ | partial | 2026-06-10 |
-| operations | OPS-01: turns/ rotation/archive | Deferred to v3+ | 2026-05-23 |
-| operations | OPS-02: tracing structured logging | Deferred to v3+ | 2026-05-23 |
-| security | SEC-01: HTTP auth (bearer token) | Deferred to v3+ | 2026-05-23 |
-| scaling | SCALE-01: parallel workers (same-process) | Deferred to v3+ | 2026-05-23 |
-| deploy | DEPLOY-01: Docker packaging | Deferred to v3+ | 2026-05-23 |
-
-## Session Continuity
-
-Last session: 2026-06-11T08:19:57.808Z
-Stopped at: Completed 04-02-PLAN.md
-Resume file: None
-
-## Operator Next Steps
-
-- Plan Phase 4: `/gsd-plan-phase 4`
-- Phase 5 needs research first: `/gsd-plan-phase --research-phase 5`

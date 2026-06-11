@@ -47,7 +47,7 @@
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02-PLAN.md — 配線: trait リネーム + worker/turn の profile 化 + main.rs(D-16) + http テスト修正 + README
+- [x] 04-02-PLAN.md — 配線: trait リネーム + worker/turn の profile 化 + main.rs(D-16) + http テスト修正 + README
 
 ### Phase 5: Codex CLI and OpenCode Validation
 
