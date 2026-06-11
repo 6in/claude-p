@@ -39,6 +39,23 @@ pub fn load_turns_dir() -> anyhow::Result<std::path::PathBuf> {
     }
 }
 
+/// AGENT 環境変数を読む。未設定なら "claude"（後方互換）。
+/// 優先順位: 実環境変数 AGENT > .env の値 > 既定値 "claude"。
+pub fn load_agent_name() -> String {
+    std::env::var("AGENT").unwrap_or_else(|_| "claude".to_string())
+}
+
+/// AGENTS_DIR 環境変数を読む。未設定なら CWD/agents を既定値とする。
+/// 優先順位: 実環境変数 AGENTS_DIR > .env の値 > 既定値 (CWD/agents)。
+pub fn load_agents_dir() -> anyhow::Result<std::path::PathBuf> {
+    match std::env::var("AGENTS_DIR") {
+        Ok(s) => Ok(std::path::PathBuf::from(s)),
+        Err(_) => Ok(std::env::current_dir()
+            .with_context(|| "current_dir 取得失敗")?
+            .join("agents")),
+    }
+}
+
 /// CORS_ORIGINS 環境変数を読む。カンマ区切りリスト、または `*` でワイルドカード。
 /// 未設定なら既定値 `vec!["*"]` (フルパーミッシブ)。
 /// 優先順位: 実環境変数 CORS_ORIGINS > .env の値 > 既定値。
