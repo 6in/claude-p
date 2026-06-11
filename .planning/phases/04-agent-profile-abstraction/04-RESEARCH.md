@@ -552,7 +552,7 @@ fn load_agent_profile_errors_on_missing_toml() {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **`process_job` receives `profile` — via parameter or via `Worker` getter?**
    - What we know: `Worker` stores `profile: AgentProfile` (D-06 says field on Worker). `process_job` currently takes `worker: &mut Worker<M>`.
