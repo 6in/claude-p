@@ -39,7 +39,7 @@
   2. `agents/claude.toml` が存在し、ハードコードを完全に置き換えている（ready_pattern / clear_command / fresh_mode / output_covenant / timeout 値が TOML で定義済み）
   3. `AGENT=<unknown>` で起動すると、対応するプロファイルファイルが見当たらない旨の明確なエラーで即時終了する
   4. 新しいエージェントプロファイル（`agents/test.toml`）をファイル追加のみで認識できる（Rust リビルド不要）
-  5. `cargo test` が全 11 件グリーン（リファクタ前回帰なし）**Plans**: 2 plans
+  5. `cargo test` が全 11 件グリーン（リファクタ前回帰なし）**Plans**: 4 plans (2 original + 2 gap closure)
 
 **Wave 1**
 
@@ -48,6 +48,11 @@
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 04-02-PLAN.md — 配線: trait リネーム + worker/turn の profile 化 + main.rs(D-16) + http テスト修正 + README
+
+**Gap Closure** *(検証ギャップ修正 — 04-VERIFICATION.md)*
+
+- [ ] 04-03-PLAN.md — covenant ロックフリー化 (CR-01) + model_flag/model_value 配線 (CR-03) + TURN_TIMEOUT 削除 (WR-03)
+- [ ] 04-04-PLAN.md — cargo fmt 適用 (CR-02): CI fmt-check ジョブをグリーン化
 
 ### Phase 5: Codex CLI and OpenCode Validation
 
