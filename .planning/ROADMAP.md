@@ -51,7 +51,7 @@
 
 **Gap Closure** *(検証ギャップ修正 — 04-VERIFICATION.md)*
 
-- [ ] 04-03-PLAN.md — covenant ロックフリー化 (CR-01) + model_flag/model_value 配線 (CR-03) + TURN_TIMEOUT 削除 (WR-03)
+- [x] 04-03-PLAN.md — covenant ロックフリー化 (CR-01) + model_flag/model_value 配線 (CR-03) + TURN_TIMEOUT 削除 (WR-03)
 - [ ] 04-04-PLAN.md — cargo fmt 適用 (CR-02): CI fmt-check ジョブをグリーン化
 
 ### Phase 5: Codex CLI and OpenCode Validation
@@ -91,7 +91,7 @@
 | 1. Repository Hygiene | v1.0 | 3/3 | Complete | 2026-05-24 |
 | 2. Module Refactor | v1.0 | 4/4 | Complete | 2026-05-25 |
 | 3. Testing & CI Automation | v1.0 | 6/6 | Complete | 2026-05-25 |
-| 4. Agent Profile Abstraction | v2.0 | 1/2 | In Progress|  |
+| 4. Agent Profile Abstraction | v2.0 | 3/4 | In Progress|  |
 | 5. Codex CLI and OpenCode Validation | v2.0 | 0/? | Not started | - |
 | 6. Multi-Instance Parallel Foundation | v2.0 | 0/? | Not started | - |
 
