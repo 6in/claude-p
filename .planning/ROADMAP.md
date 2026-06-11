@@ -43,7 +43,7 @@
 
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — AgentProfile 契約レイヤー: profile.rs + agents/claude.toml + config ローダー + toml 依存
+- [x] 04-01-PLAN.md — AgentProfile 契約レイヤー: profile.rs + agents/claude.toml + config ローダー + toml 依存
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -86,7 +86,7 @@
 | 1. Repository Hygiene | v1.0 | 3/3 | Complete | 2026-05-24 |
 | 2. Module Refactor | v1.0 | 4/4 | Complete | 2026-05-25 |
 | 3. Testing & CI Automation | v1.0 | 6/6 | Complete | 2026-05-25 |
-| 4. Agent Profile Abstraction | v2.0 | 0/? | Not started | - |
+| 4. Agent Profile Abstraction | v2.0 | 1/2 | In Progress|  |
 | 5. Codex CLI and OpenCode Validation | v2.0 | 0/? | Not started | - |
 | 6. Multi-Instance Parallel Foundation | v2.0 | 0/? | Not started | - |
 

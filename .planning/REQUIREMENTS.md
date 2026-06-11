@@ -9,12 +9,12 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### プロファイル機構（PROF）
 
-- [ ] **PROF-01**: 運用者は `agents/<name>.toml` でエージェントの spawn コマンド・引数・環境変数・ready_pattern・clear 手順を定義できる
-- [ ] **PROF-02**: 運用者は起動時に `AGENT=<name>` 環境変数でプロファイルを選択できる（未指定時は `claude` で後方互換）
+- [x] **PROF-01**: 運用者は `agents/<name>.toml` でエージェントの spawn コマンド・引数・環境変数・ready_pattern・clear 手順を定義できる
+- [x] **PROF-02**: 運用者は起動時に `AGENT=<name>` 環境変数でプロファイルを選択できる（未指定時は `claude` で後方互換）
 - [ ] **PROF-03**: `agents/claude.toml` が現行ハードコード挙動（"auto mode" ready 検知・`/clear`・25s 起動待ち）を再現し、既存 4 エンドポイントの挙動が変わらない
 - [ ] **PROF-04**: `fresh:true` がプロファイルの `fresh_mode` に従って動作する（`command` = clear コマンド送信 / `respawn` = セッション kill+再生成）
-- [ ] **PROF-05**: `startup_timeout_secs`・`turn_timeout_secs`・model 選択（flag/value）をプロファイルで上書きできる（未指定時は現行デフォルト）
-- [ ] **PROF-06**: 新エージェントの追加が TOML ファイル追加のみで完結する（Rust コード変更・リビルド不要）
+- [x] **PROF-05**: `startup_timeout_secs`・`turn_timeout_secs`・model 選択（flag/value）をプロファイルで上書きできる（未指定時は現行デフォルト）
+- [x] **PROF-06**: 新エージェントの追加が TOML ファイル追加のみで完結する（Rust コード変更・リビルド不要）
 
 ### エージェント対応（AGNT）
 
@@ -60,12 +60,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROF-01 | Phase 4 | Pending |
-| PROF-02 | Phase 4 | Pending |
+| PROF-01 | Phase 4 | Complete |
+| PROF-02 | Phase 4 | Complete |
 | PROF-03 | Phase 4 | Pending |
 | PROF-04 | Phase 4 | Pending |
-| PROF-05 | Phase 4 | Pending |
-| PROF-06 | Phase 4 | Pending |
+| PROF-05 | Phase 4 | Complete |
+| PROF-06 | Phase 4 | Complete |
 | AGNT-01 | Phase 5 | Pending |
 | AGNT-02 | Phase 5 | Pending |
 | AGNT-03 | Phase 5 | Pending |
