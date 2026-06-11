@@ -38,7 +38,9 @@
   3. `AGENT=<unknown>` で起動すると、対応するプロファイルファイルが見当たらない旨の明確なエラーで即時終了する
   4. 新しいエージェントプロファイル（`agents/test.toml`）をファイル追加のみで認識できる（Rust リビルド不要）
   5. `cargo test` が全 11 件グリーン（リファクタ前回帰なし）
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 04-01-PLAN.md — AgentProfile 契約レイヤー: profile.rs + agents/claude.toml + config ローダー + toml 依存
+- [ ] 04-02-PLAN.md — 配線: trait リネーム + worker/turn の profile 化 + main.rs(D-16) + http テスト修正 + README
 
 ### Phase 5: Codex CLI and OpenCode Validation
 **Goal**: Codex CLI と OpenCode を実機で駆動し、ターンファイル方式での結果取得が動作することを E2E で確認できる。
