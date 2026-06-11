@@ -47,13 +47,12 @@
 - ✓ **REPO-06 / TEST-01..03**: `#[cfg(test)] mod tests` 形式で 11 本のテスト（純粋関数 5 + MCP クライアント 3 + HTTP 統合 3） — Phase 3 (Testing & CI Automation)
 - ✓ **REPO-07 / TOOL-01**: リポジトリ直下に `justfile`（build / run / test / fmt / clippy / clean の 6 レシピ、`set working-directory := 'webif'`） — Phase 3
 - ✓ **REPO-08 / TOOL-02**: `.github/workflows/ci.yml`（push/PR トリガ、ubuntu-latest 単一 `check` ジョブで `cargo fmt --check` → `clippy -D warnings` → `test` 直列、`Swatinem/rust-cache@v2`） — Phase 3
+- ✓ **PROF-01..06**: エージェントプロファイル機構（`agents/*.toml`、`AGENT` env でインスタンス単位選択、ready_pattern / clear_command / fresh_mode / output_covenant / timeout を TOML 定義、Rust リビルド不要で新プロファイル追加可） — Validated in Phase 4: Agent Profile Abstraction（v1.0 挙動等価、27 テストグリーン）
 
 ### Active
 
 <!-- v2.0 マルチエージェント対応のスコープ。詳細な REQ-ID は REQUIREMENTS.md で定義。 -->
 
-- [ ] エージェントプロファイル機構（設定ファイル定義、コード変更なしで新エージェント追加）
-- [ ] インスタンス単位のエージェント選択（起動時固定、1プロセス=1エージェント）
 - [ ] Codex CLI 対応（プロファイル経由で駆動、ターンファイル方式で結果取得）
 - [ ] OpenCode 対応（同上）
 - [ ] 多重インスタンスによる並列駆動の土台
@@ -137,4 +136,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-11 after v2.0 milestone start — マイルストーン「マルチエージェント対応」を開始（エージェントプロファイル機構・Codex CLI / OpenCode 対応・多重インスタンス並列駆動の土台）。*
+*Last updated: 2026-06-11 after Phase 4 completion — Agent Profile Abstraction 完了（`agents/claude.toml` でハードコード置換、v1.0 挙動等価、PROF-01..06 検証済み）。次は Phase 5: Codex CLI / OpenCode 実機検証。*
