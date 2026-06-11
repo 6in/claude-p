@@ -1,0 +1,35 @@
+# agents/claude.toml
+# Claude Code（claude CLI）エージェントプロファイル。
+# 新プロファイル作成時のテンプレートとして使用してください。
+# 各フィールドの説明を参考に agents/<name>.toml を追加するだけで新エージェントを登録できます。
+
+# spawn コマンド（例: ["claude"] / ["codex", "--yolo"] / ["opencode"]）
+command = ["claude"]
+
+# TUI が ready 状態になったと判定する部分文字列
+ready_pattern = "auto mode"
+
+# fresh リセット方式: "command" = clear_command 送信 / "respawn" = セッション kill+再生成
+fresh_mode = "command"
+
+# fresh_mode = "command" 時に送るクリアコマンド
+clear_command = "/clear"
+
+# 出力規約テンプレート。{result_path} と {status_path} の両プレースホルダが必須。
+output_covenant = """
+【ht-webif 出力規約】上のタスクを実行し、次のとおりファイルに書き出してください:
+1. 回答本文を次のファイルに書く: {result_path}
+2. 完了したら最後に次のファイルを作る: {status_path}
+   中身は JSON 1行: {"status":"done"}（失敗時は {"status":"failed","error":"理由"}）
+status ファイルが完了検知シグナルです。必ず result を書き終えてから最後に status を書いてください。"""
+
+# トリガーメッセージテンプレート。{prompt_path} プレースホルダが必須。
+trigger_template = "{prompt_path} を読んで、その指示に従ってください。"
+
+# チューニング値（未指定なら以下のデフォルトが使われる）
+# startup_timeout_secs = 25
+# turn_timeout_secs = 300
+
+# モデル選択（コメントアウト例 — 使用する場合は両方指定）
+# model_flag = "--model"
+# model_value = "opus"
