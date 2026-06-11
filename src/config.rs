@@ -73,3 +73,70 @@ pub fn load_cors_origins() -> Vec<String> {
         Err(_) => vec!["*".to_string()],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // GAP-1 (PROF-02): load_agent_name はAGENT未設定時に "claude" を返す。
+    // 並列テスト安全のため：unset → assert default、set → assert value、restore を1テストにまとめる。
+    #[test]
+    fn agent_name_defaults_to_claude_when_env_unset_and_returns_env_value_when_set() {
+        // env が汚染されていないことを前提に「未設定」ケースをテスト
+        // （CI でも AGENT が設定されている場合に備え save/restore する）
+        let saved = std::env::var("AGENT").ok();
+
+        // 未設定パス
+        std::env::remove_var("AGENT");
+        let default_val = load_agent_name();
+        assert_eq!(
+            default_val, "claude",
+            "AGENT 未設定時の既定値は 'claude' であるべき（実際: {default_val:?}）"
+        );
+
+        // 設定パス
+        std::env::set_var("AGENT", "my-custom-agent");
+        let custom_val = load_agent_name();
+        assert_eq!(
+            custom_val, "my-custom-agent",
+            "AGENT=my-custom-agent を設定したときにその値が返るべき（実際: {custom_val:?}）"
+        );
+
+        // 復元
+        match saved {
+            Some(v) => std::env::set_var("AGENT", v),
+            None => std::env::remove_var("AGENT"),
+        }
+    }
+
+    // GAP-1 (PROF-02): load_agents_dir はAGENTS_DIR未設定時にCWD/agentsを返す。
+    // AGENTS_DIR 設定時はその値を PathBuf で返す。
+    #[test]
+    fn agents_dir_defaults_to_cwd_agents_when_unset_and_uses_env_when_set() {
+        let saved = std::env::var("AGENTS_DIR").ok();
+
+        // 未設定パス: CWD/agents を返すことを確認
+        std::env::remove_var("AGENTS_DIR");
+        let default_dir = load_agents_dir().expect("AGENTS_DIR 未設定でエラー");
+        let expected = std::env::current_dir().unwrap().join("agents");
+        assert_eq!(
+            default_dir, expected,
+            "AGENTS_DIR 未設定時は CWD/agents であるべき（実際: {default_dir:?}）"
+        );
+
+        // 設定パス: 指定値を PathBuf として返すことを確認
+        std::env::set_var("AGENTS_DIR", "/custom/agents/path");
+        let custom_dir = load_agents_dir().expect("AGENTS_DIR 設定時にエラー");
+        assert_eq!(
+            custom_dir,
+            std::path::PathBuf::from("/custom/agents/path"),
+            "AGENTS_DIR=/custom/agents/path のとき PathBuf('/custom/agents/path') を返すべき（実際: {custom_dir:?}）"
+        );
+
+        // 復元
+        match saved {
+            Some(v) => std::env::set_var("AGENTS_DIR", v),
+            None => std::env::remove_var("AGENTS_DIR"),
+        }
+    }
+}

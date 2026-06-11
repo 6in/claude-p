@@ -401,6 +401,60 @@ mod tests {
         );
     }
 
+    // ── GAP-2 (PROF-03): POST /prompt は worker Mutex 保持中でもブロックしない（CR-01） ──
+    //
+    // prompt_handler は state.output_covenant を直読みし worker Mutex を一切取得しない。
+    // このテストでは worker Mutex を取得したままロックを保持し続けた状態で
+    // POST /prompt を送り、2秒以内に 200 + turn_id が返ることを検証する。
+    // prompt_handler が Mutex をロックしようとすれば tokio::time::timeout が切れて失敗する。
+    #[tokio::test]
+    async fn prompt_handler_returns_turn_id_immediately_while_worker_mutex_is_held() {
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let (state, _job_rx) = build_test_state(dir.path().to_path_buf());
+
+        // worker Mutex を取得して保持し続ける（worker_loop が動いていないため誰も解放しない）
+        let _guard = state.worker.lock().await;
+
+        let app = build_router(Arc::clone(&state), vec!["*".to_string()]);
+
+        let resp = tokio::time::timeout(
+            Duration::from_secs(2),
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/prompt")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"prompt":"テストプロンプト"}"#))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .expect(
+            "POST /prompt が 2 秒以内に応答しなかった（worker Mutex ロック中にブロックした可能性）",
+        )
+        .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "POST /prompt は worker Mutex 保持中でも 200 を返すべき"
+        );
+
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let v: Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(
+            v.get("turn_id").and_then(Value::as_str).is_some(),
+            "レスポンスに turn_id が含まれるべき（実際: {v}）"
+        );
+        assert_eq!(
+            v.get("status").and_then(Value::as_str),
+            Some("accepted"),
+            "status は 'accepted' であるべき（実際: {v}）"
+        );
+    }
+
     // ── CORS: actual request（非 preflight）でも Allow-Origin ヘッダが付くことを確認 ──
     //
     // actual request（非 preflight）でも Allow-Origin ヘッダが付くことを確認。
