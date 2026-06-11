@@ -21,6 +21,11 @@ async fn main() -> Result<()> {
     let profile = load_agent_profile(&agent_name, &agents_dir)?;
     eprintln!("[profile] エージェント: {agent_name}");
 
+    // output_covenant は Worker::new で profile が move される前に取り出す（CR-01）。
+    // プロファイルは起動後イミュータブルなので AppState に直接持たせ、
+    // ターン実行中でも worker Mutex をブロックせずに読めるようにする。
+    let output_covenant = profile.output_covenant.clone();
+
     // 1. ht-mcp 起動 + MCP ハンドシェイク + claude セッション
     let worker = Worker::new(ht_mcp_path, profile).await?;
 
@@ -40,6 +45,7 @@ async fn main() -> Result<()> {
         worker,
         turns_dir,
         job_tx,
+        output_covenant,
     });
     let cors_origins = load_cors_origins();
     eprintln!("[profile] CORS 許可オリジン: {:?}", cors_origins);

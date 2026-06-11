@@ -24,6 +24,9 @@ pub struct AppState<M: Mcp + Send + 'static = McpClient> {
     pub worker: Arc<Mutex<Worker<M>>>,
     pub turns_dir: PathBuf,
     pub job_tx: mpsc::Sender<Job>,
+    /// プロファイルは起動後イミュータブルなので Mutex 越しに取得不要。
+    /// ターン実行中（worker Mutex 保持中）でも output_covenant を即読めるようにする（CR-01）。
+    pub output_covenant: String,
 }
 
 pub(crate) fn ise<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
@@ -53,12 +56,10 @@ async fn prompt_handler<M: Mcp + Send + 'static>(
     let status_path = state.turns_dir.join(format!("status-{turn_id}.json"));
 
     // prompt ファイルを先に書く（GET が即「running」を返せるように）
-    // output_covenant は worker の profile から取得（profile.output_covenant）
-    let covenant = {
-        let w = state.worker.lock().await;
-        w.profile.output_covenant.clone()
-    };
-    let body = build_prompt_body(&req.prompt, &result_path, &status_path, &covenant);
+    // output_covenant は AppState から直接取得（ロックフリー）。
+    // プロファイルは起動後イミュータブルなので worker Mutex を取る必要はなく、
+    // ターン実行中（最大 600s）でも POST /prompt が即応できる（CR-01 解消）。
+    let body = build_prompt_body(&req.prompt, &result_path, &status_path, &state.output_covenant);
     tokio::fs::write(&prompt_path, body).await.map_err(ise)?;
 
     // ジョブをキュー投入
@@ -226,6 +227,8 @@ mod tests {
         // プロファイルは実 TOML からロード（Pitfall 4: turns_dir は main.rs 経由でなくここでそのまま使う）。
         let profile = crate::profile::load_agent_profile("claude", Path::new("agents"))
             .expect("テスト用 agents/claude.toml のロード失敗");
+        // output_covenant は Worker::new で profile が move される前に取り出す（CR-01 同様）。
+        let output_covenant = profile.output_covenant.clone();
         // FakeMcp は scripted reply 不要（本テストでは turn_handler 経路のみ叩く）。
         let worker = Worker::<FakeMcp>::from_parts(
             FakeMcp::new(),
@@ -238,6 +241,7 @@ mod tests {
             worker,
             turns_dir,
             job_tx,
+            output_covenant,
         });
         (state, job_rx)
     }
