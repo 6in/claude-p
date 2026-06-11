@@ -19,7 +19,7 @@ use crate::config::MCP_TIMEOUT;
 #[async_trait]
 pub trait Mcp: Send {
     async fn handshake(&mut self) -> Result<()>;
-    async fn create_claude_session(&mut self) -> Result<String>;
+    async fn create_session(&mut self, cmd: &[String]) -> Result<String>;
     async fn close_session(&mut self, session_id: &str) -> Result<()>;
     async fn send_keys(&mut self, session_id: &str, keys: &[String]) -> Result<()>;
     async fn submit_line(&mut self, session_id: &str, text: &str) -> Result<()>;
@@ -189,9 +189,9 @@ impl Mcp for McpClient {
     }
 
     /// claude TUI を走らせる HT セッションを作り、セッション ID を返す。
-    async fn create_claude_session(&mut self) -> Result<String> {
+    async fn create_session(&mut self, cmd: &[String]) -> Result<String> {
         let text = self
-            .call_tool("ht_create_session", json!({ "command": ["claude"] }))
+            .call_tool("ht_create_session", json!({ "command": cmd }))
             .await?;
         let after = text
             .split("Session ID:")
@@ -264,7 +264,7 @@ pub(crate) mod tests {
     pub(crate) struct FakeMcp {
         // handshake の呼び出し回数を記録（assertion 用）。
         pub handshake_calls: u32,
-        // create_claude_session の応答キュー。空ならエラーを返す。
+        // create_session の応答キュー。空ならエラーを返す。
         pub create_session_replies: VecDeque<Result<String>>,
         // close_session に渡された session_id のログ。
         pub close_session_log: Vec<String>,
@@ -299,11 +299,11 @@ pub(crate) mod tests {
             Ok(())
         }
 
-        // scripted reply キューから先頭を pop。空ならエラー。
-        async fn create_claude_session(&mut self) -> Result<String> {
+        // scripted reply キューから先頭を pop。空ならエラー。cmd 引数は無視。
+        async fn create_session(&mut self, _cmd: &[String]) -> Result<String> {
             self.create_session_replies
                 .pop_front()
-                .unwrap_or_else(|| Err(anyhow!("create_claude_session scripted reply 切れ")))
+                .unwrap_or_else(|| Err(anyhow!("create_session scripted reply 切れ")))
         }
 
         // session_id を log に積むだけの no-op。

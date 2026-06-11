@@ -5,6 +5,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crate::mcp::{Mcp, McpClient, Restartable};
+use crate::profile::AgentProfile;
 
 /// Worker は M: Mcp 型でジェネリック化された状態オブジェクト（D-03）。
 /// デフォルト型 `M = McpClient` を持つので main.rs は `Worker::new(...)` のまま
@@ -13,36 +14,38 @@ pub struct Worker<M: Mcp = McpClient> {
     client: M,
     pub session_id: String,
     ht_mcp_path: String,
+    pub profile: AgentProfile,
 }
 
 // ── 具象 impl ブロック: McpClient::spawn を呼ぶため M = McpClient に固定 ──
 impl Worker<McpClient> {
     /// ht-mcp を起動し、claude セッションを1つ立ち上げる。
-    pub async fn new(ht_mcp_path: String) -> Result<Self> {
-        let (client, session_id) = Self::boot(&ht_mcp_path).await?;
+    pub async fn new(ht_mcp_path: String, profile: AgentProfile) -> Result<Self> {
+        let (client, session_id) = Self::boot(&ht_mcp_path, &profile).await?;
         Ok(Self {
             client,
             session_id,
             ht_mcp_path,
+            profile,
         })
     }
 
     /// ht-mcp 起動 → MCP ハンドシェイク → claude セッション作成。
-    pub(crate) async fn boot(ht_mcp_path: &str) -> Result<(McpClient, String)> {
+    pub(crate) async fn boot(ht_mcp_path: &str, profile: &AgentProfile) -> Result<(McpClient, String)> {
         let mut client = McpClient::spawn(ht_mcp_path).await?;
         client.handshake().await?;
-        let session_id = Self::spawn_session(&mut client).await?;
+        let session_id = Self::spawn_session(&mut client, profile).await?;
         Ok((client, session_id))
     }
 
     /// claude TUI セッションを作り、ready になるまで待ってセッション ID を返す。
     /// `McpClient` 具象に紐づく（本番起動経路）。
-    pub(crate) async fn spawn_session(client: &mut McpClient) -> Result<String> {
-        let session_id = client.create_claude_session().await?;
-        let deadline = Instant::now() + Duration::from_secs(25);
+    pub(crate) async fn spawn_session(client: &mut McpClient, profile: &AgentProfile) -> Result<String> {
+        let session_id = client.create_session(&profile.command).await?;
+        let deadline = Instant::now() + Duration::from_secs(profile.startup_timeout_secs);
         loop {
             let snap = client.snapshot(&session_id).await?;
-            if snap.contains("auto mode") {
+            if snap.contains(&profile.ready_pattern) {
                 return Ok(session_id);
             }
             if Instant::now() > deadline {
@@ -60,11 +63,12 @@ impl<M: Mcp + Send> Worker<M> {
     /// `#[cfg(test)]` で本番ビルドからは見えず、`pub(crate)` で同一クレート内テストからのみ参照可能。
     /// 03-04 で http::tests::build_test_state から呼ばれる。
     #[cfg(test)]
-    pub(crate) fn from_parts(client: M, session_id: String, ht_mcp_path: String) -> Self {
+    pub(crate) fn from_parts(client: M, session_id: String, ht_mcp_path: String, profile: AgentProfile) -> Self {
         Self {
             client,
             session_id,
             ht_mcp_path,
+            profile,
         }
     }
 
@@ -82,9 +86,10 @@ impl<M: Mcp + Send> Worker<M> {
 
     /// セッションが生きているか確認し、死んでいれば再生成する（shared-fate 対策）。
     pub async fn ensure_healthy(&mut self) -> Result<()> {
+        let ready_pattern = self.profile.ready_pattern.clone();
         let healthy = matches!(
             self.snapshot().await,
-            Ok(snap) if snap.contains("auto mode")
+            Ok(snap) if snap.contains(&ready_pattern)
         );
         if !healthy {
             eprintln!("[shared-fate] claude セッション不健全 → 再生成");
@@ -94,17 +99,19 @@ impl<M: Mcp + Send> Worker<M> {
     }
 
     /// claude セッションを作り直す。旧セッションは後始末する（失敗は無視）。
-    /// 既存挙動を保つため `create_claude_session` の後で `snapshot` を polling し
-    /// "auto mode" を含むまで待つ（Phase 2 の behavior preservation 制約）。
+    /// 既存挙動を保つため `create_session` の後で `snapshot` を polling し
+    /// ready_pattern を含むまで待つ（Phase 2 の behavior preservation 制約）。
     /// trait Mcp のメソッドのみで実装できるので汎用 impl に置ける。
     pub(crate) async fn recreate(&mut self) -> Result<()> {
         let old = self.session_id.clone();
-        let new_id = self.client.create_claude_session().await?;
+        let cmd = self.profile.command.clone();
+        let new_id = self.client.create_session(&cmd).await?;
         // ready 待ち（spawn_session と同じロジック）。
-        let deadline = Instant::now() + Duration::from_secs(25);
+        let deadline = Instant::now() + Duration::from_secs(self.profile.startup_timeout_secs);
+        let ready_pattern = self.profile.ready_pattern.clone();
         loop {
             let snap = self.client.snapshot(&new_id).await?;
-            if snap.contains("auto mode") {
+            if snap.contains(&ready_pattern) {
                 break;
             }
             if Instant::now() > deadline {
@@ -136,12 +143,14 @@ impl<M: Mcp + Restartable + Send> Worker<M> {
     /// （Restartable::respawn の中で *self = new で旧 client が drop される）。
     pub async fn restart(&mut self) -> Result<()> {
         self.client.respawn(&self.ht_mcp_path).await?;
-        let new_id = self.client.create_claude_session().await?;
+        let cmd = self.profile.command.clone();
+        let new_id = self.client.create_session(&cmd).await?;
         // ready 待ち（spawn_session と同じロジック）。
-        let deadline = Instant::now() + Duration::from_secs(25);
+        let deadline = Instant::now() + Duration::from_secs(self.profile.startup_timeout_secs);
+        let ready_pattern = self.profile.ready_pattern.clone();
         loop {
             let snap = self.client.snapshot(&new_id).await?;
-            if snap.contains("auto mode") {
+            if snap.contains(&ready_pattern) {
                 break;
             }
             if Instant::now() > deadline {
