@@ -19,7 +19,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### エージェント対応（AGNT）
 
 - [ ] **AGNT-01**: Codex CLI プロファイル（`agents/codex.toml`）で `POST /prompt` → result 取得が実機 E2E で動作する
-- [ ] **AGNT-02**: Codex CLI で `fresh:true` が respawn 方式で実機 E2E 動作する（Codex は in-session clear を持たない）
+- [ ] **AGNT-02**: Codex CLI で `fresh:true`（`/clear` 送信）が実機 E2E 動作する（Codex も in-session `/clear` を持つ — 2026-06-11 修正。実機検証で不安定な場合は `fresh_mode = "respawn"` へフォールバック）
 - [ ] **AGNT-03**: OpenCode プロファイル（`agents/opencode.toml`）で `POST /prompt` → result 取得が実機 E2E で動作する
 - [ ] **AGNT-04**: OpenCode で `fresh:true`（`/new` 送信）が実機 E2E 動作する
 

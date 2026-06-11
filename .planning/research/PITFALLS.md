@@ -161,13 +161,13 @@ Single-instance deployment makes this invisible during development. The problem 
 ### Pitfall 7: Session Clear/Reset Command Differences Break `fresh:true`
 
 **What goes wrong:**
-The current `fresh:true` implementation sends `/clear` to the Claude Code TUI before dispatching a prompt. This is hardcoded in the worker logic. When the agent is switched to Codex CLI, `/clear` is not a Codex slash command — Codex CLI uses a different set of slash commands (it has `/compact`, `/model`, `/history`, etc., but not `/clear`). The text `/clear` is sent as a literal prompt to the agent, which either confuses the agent or is treated as an unknown command, corrupting the session state instead of clearing it. OpenCode uses `/new` (with `/clear` as an alias as of the current version, but this has varied across releases).
+The current `fresh:true` implementation sends `/clear` to the Claude Code TUI before dispatching a prompt. This is hardcoded in the worker logic. (CORRECTED 2026-06-11: this section originally claimed Codex CLI lacks `/clear` — that was wrong; Codex CLI does support `/clear`/`/new` in-session, per user confirmation and official docs. The general pitfall stands for agents whose clear vocabulary differs.) OpenCode uses `/new` (with `/clear` as an alias as of the current version, but this has varied across releases), and a future agent may have no clear command at all — sending an unrecognized slash command as a literal prompt confuses the agent or corrupts the session instead of clearing it.
 
 **Why it happens:**
 The clear command is treated as a stable primitive, but it is actually agent-specific. Claude Code's `/clear` is one of its most-used commands and well-documented, but other agents have different vocabulary. The profile abstraction makes this seem solved by a `clear_command` field, but the subtlety is that some agents do not clear in-place — OpenCode's `/new` starts a *new session* (new session ID), which means the agent's internal session state changes and any context the worker holds about the session may be invalidated.
 
 **How to avoid:**
-- The agent profile TOML must include a `clear_command` field (e.g., `"/clear"` for Claude Code, `"/new"` or an empty string for Codex CLI).
+- The agent profile TOML must include a `clear_command` field (e.g., `"/clear"` for Claude Code and Codex CLI, `"/new"` for OpenCode).
 - For agents where "clear" creates a new session rather than clearing in the current one, the worker must re-run the ready-detection after issuing the clear command, because the session context changed. Model this as a mini-restart rather than a simple command dispatch.
 - For agents that have no clear command (or where clearing is unsafe in headless mode), set `clear_command = ""` in the profile and document that `fresh:true` is unsupported for that agent.
 - Test `fresh:true` explicitly in each agent's integration test.

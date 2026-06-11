@@ -149,7 +149,7 @@ This section is the canonical source for profile field values — the output of 
 | Model flag | `--model <id>` or `-m <id>` | e.g. `--model gpt-5.4` |
 | Permission bypass flag | `--dangerously-bypass-approvals-and-sandbox` (alias `--yolo`) | Also `CODEX_NON_INTERACTIVE=1` for unattended installer; for runtime bypass `--yolo` is the correct flag |
 | Ready signal (terminal snapshot) | Unknown — requires empirical observation | Likely a prompt marker or status line; must be determined by running `codex` under ht-mcp and capturing snapshot. `ready_pattern` in profile should be set after testing. Best guess: presence of a `>` or `codex>` prompt marker |
-| Clear / new session command | Fresh `codex` session (no in-session clear command) | `codex resume` resumes; `codex fork` branches. For WebIF "fresh" semantics, the profile `clear_command` should be empty and fresh:true should kill+respawn the session instead |
+| Clear / new session command | `/clear` (also `/new`) | CORRECTED 2026-06-11: Codex CLI DOES have in-session `/clear` and `/new` slash commands — confirmed by user experience and official Codex docs (see STACK.md research). Profile default: `clear_command = "/clear"`, `fresh_mode = "command"`; verify under ht-mcp during agent validation |
 | Prompt submission | `\n` (Enter) | Standard |
 | First-run trust prompts | Yes — approval prompts before shell execution | `--yolo` bypasses; authenticate via `OPENAI_API_KEY` env var |
 | Working directory | `--cd <path>` or `-C <path>` flag | Must be in `args` array in profile |
@@ -172,15 +172,16 @@ This section is the canonical source for profile field values — the output of 
 
 ---
 
-## Critical Implementation Note: Codex "fresh" Semantics
+## Critical Implementation Note: Codex "fresh" Semantics (CORRECTED 2026-06-11)
 
-Codex CLI does not have an in-session `/clear` equivalent. Each `codex` invocation always starts a fresh session (`codex resume` explicitly opts into continuation). For the `fresh:true` path in WebIF, the profile should express this as:
+**Correction:** This section originally claimed Codex CLI has no in-session `/clear` equivalent. That was wrong — Codex CLI DOES support `/clear` (and `/new`) as in-session slash commands, confirmed by user experience and official Codex CLI docs (see STACK.md research, which had this right). `agents/codex.toml` should therefore default to:
 
 ```
-fresh_mode = "respawn"   # kill and respawn the session (vs "command" for Claude/OpenCode)
+clear_command = "/clear"
+fresh_mode = "command"   # same as Claude/OpenCode
 ```
 
-This means the profile schema needs a `fresh_mode` field with values `"command"` (send `clear_command` text) or `"respawn"` (kill+recreate session). This is a P1 schema decision — failing to capture it means Codex `fresh:true` silently sends `/clear` which is a no-op or error.
+The `fresh_mode` field with values `"command"` (send `clear_command` text) or `"respawn"` (kill+recreate session) is retained in the schema as a generality: it covers future agents that genuinely lack an in-session clear, and serves as a fallback if `/clear` proves unreliable under ht-mcp/PTY automation during empirical validation.
 
 ---
 

@@ -39,7 +39,7 @@ See `.planning/research/FEATURES.md` for the full feature table with complexity 
 - Launcher script `scripts/launch-agents.sh` for parallel instance startup
 - `extra_args` / permission-bypass field in profile (`--dangerously-skip-permissions`, `--yolo`)
 
-**Critical schema decision — `fresh_mode` field:** Codex CLI has no in-session `/clear` equivalent; `fresh:true` must kill+respawn the session rather than sending a command. Profile schema needs `fresh_mode = "command"` (Claude/OpenCode) vs `fresh_mode = "respawn"` (Codex CLI). Missing this silently sends `/clear` as a literal prompt to Codex.
+**Schema decision — `fresh_mode` field (CORRECTED 2026-06-11):** Codex CLI DOES support in-session `/clear`/`/new` (user-confirmed + official docs; see STACK.md, which had this right — the original "no in-session clear" claim from FEATURES.md was wrong). All three launch agents default to `fresh_mode = "command"`. The field is retained as schema generality for future agents that lack an in-session clear, and as a fallback if `/clear` proves unreliable under PTY automation during empirical validation.
 
 **Should have (v2.x after validation):**
 - `model_flag` + `model_value` profile fields for per-instance model override
@@ -74,7 +74,7 @@ See `.planning/research/PITFALLS.md` for all 8 pitfalls with recovery strategies
 
 3. **First-run trust dialogs and auth prerequisites block startup** — Codex CLI shows a directory-trust dialog not always suppressed by `--yolo` (GitHub issues #14345, #9695); OpenCode requires `opencode auth login` before TUI launch. Add `prerequisite_check` field to profiles; fail fast with a clear error rather than timing out.
 
-4. **`fresh:true` / session clear divergence** — Codex CLI has no `/clear` equivalent; sending it as a prompt corrupts the session. OpenCode's `/new` creates a new session ID requiring re-running ready-detection. `fresh_mode` field is P1.
+4. **`fresh:true` / session clear divergence** — the clear command is agent-specific (Claude `/clear`, OpenCode `/new`, Codex `/clear`/`/new` — CORRECTED 2026-06-11: Codex does have in-session clear). OpenCode's `/new` creates a new session ID requiring re-running ready-detection. Per-profile `clear_command` is P1; `fresh_mode` retained as generality/fallback.
 
 5. **`turns/` directory collision in multi-instance operation** — Default `TURNS_DIR = ./turns/` causes silent namespace collisions. Change default to `./turns/<agent-name>/` in Phase 1 so `AGENT=claude` and `AGENT=codex` are automatically isolated.
 
@@ -102,10 +102,10 @@ See `.planning/research/PITFALLS.md` for all 8 pitfalls with recovery strategies
 
 ### Phase 2: Codex CLI and OpenCode Profile Validation
 
-**Rationale:** This phase is research-heavy and implementation-light. The Rust code from Phase 1 requires only new TOML files; the work is empirical: run each agent under ht-mcp, capture snapshots, determine `ready_pattern` values, test `output_covenant` text, validate `fresh_mode = "respawn"` for Codex, and confirm permission-bypass flags suppress all interactive prompts. The implementation delta is small (two new TOML files plus any schema tweaks), but the empirical testing is the actual time investment and the source of all blocking unknowns.
+**Rationale:** This phase is research-heavy and implementation-light. The Rust code from Phase 1 requires only new TOML files; the work is empirical: run each agent under ht-mcp, capture snapshots, determine `ready_pattern` values, test `output_covenant` text, validate `/clear` behavior for Codex (falling back to `fresh_mode = "respawn"` only if `/clear` proves unreliable under PTY automation), and confirm permission-bypass flags suppress all interactive prompts. The implementation delta is small (two new TOML files plus any schema tweaks), but the empirical testing is the actual time investment and the source of all blocking unknowns.
 
 **Delivers:**
-- `agents/codex.toml`: verified `ready_pattern`, `fresh_mode = "respawn"`, `turn_timeout_secs >= 600`, covenant tested against GPT-4o/o3
+- `agents/codex.toml`: verified `ready_pattern`, `clear_command = "/clear"` + `fresh_mode = "command"` (respawn fallback only if `/clear` unreliable), `turn_timeout_secs >= 600`, covenant tested against GPT-4o/o3
 - `agents/opencode.toml`: verified `ready_pattern`, `clear_command = "/new"`, `fresh_mode = "command"`, covenant tested against configured provider
 - Prerequisite documentation in each profile (auth setup, directory trust steps)
 - Integration smoke tests gated behind feature flag for CI without binaries
