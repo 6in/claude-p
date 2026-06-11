@@ -1,6 +1,6 @@
 ---
 phase: 04-agent-profile-abstraction
-reviewed: 2026-06-11T08:30:00Z
+reviewed: 2026-06-11T09:35:00Z
 depth: standard
 files_reviewed: 9
 files_reviewed_list:
@@ -14,180 +14,242 @@ files_reviewed_list:
   - src/turn.rs
   - src/worker.rs
 findings:
-  critical: 3
-  warning: 6
-  info: 4
-  total: 13
+  critical: 0
+  warning: 7
+  info: 7
+  total: 14
 status: issues_found
 ---
 
-# Phase 04: Code Review Report
+# Phase 4: Code Review Report (Re-review after gap closure 04-03/04-04)
 
-**Reviewed:** 2026-06-11T08:30:00Z
+**Reviewed:** 2026-06-11T09:35:00Z
 **Depth:** standard
 **Files Reviewed:** 9
 **Status:** issues_found
 
 ## Summary
 
-Phase 04 のエージェントプロファイル抽象化（`agents/claude.toml` + `src/profile.rs` + 各層への配線）をレビューした。テストは 24/24 パス、clippy はクリーン。しかし本フェーズの diff（`5df2cb1^..HEAD`）に対する検証で **3 件の Critical** を確認した:
+Re-review of agent-profile-abstraction after gap-closure plans 04-03/04-04. The four
+findings targeted by those plans — CR-01 (lock-held `output_covenant`), CR-02 (fmt
+diff), CR-03 (model selection not wired), and the dead `TURN_TIMEOUT` const — are all
+**verified fixed** (evidence below). `cargo fmt --check` is clean,
+`cargo clippy --all-targets -- -D warnings` is clean, all 27 tests pass.
 
-1. `prompt_handler` が covenant 取得のために worker Mutex をロックするようになり、ターン実行中（worker_loop がロックを最大 2×turn_timeout ≒ 600 秒以上保持）は **非同期 POST /prompt が即時応答できなくなる**回帰。
-2. `cargo fmt --check` が失敗する（profile.rs / turn.rs / worker.rs 計 5 箇所）。CI の最初のジョブ（fmt-check）がハード失敗する。
-3. `model_flag` / `model_value` がパース・テストされるだけで **どこにも配線されておらず**、設定しても無視される（agents/claude.toml は「使用する場合は両方指定」と機能するように文書化している）。
+No Critical issues remain. However, the gap-closure plans addressed only those four
+findings: **five findings from the previous review remain open** (WR-01, WR-02, WR-03,
+WR-04, WR-07 plus four Info items below), and this re-review adds two new Warnings
+(WR-05 restart-lock starvation, WR-06 permissive CORS default) and three new Info
+items. The highest-leverage open items are WR-02 (AGENT env var reaches the
+filesystem unvalidated, violating the project's own whitelisting convention) and
+WR-03 (the 700s sync-wait deadline is now incoherent with the profile-configurable
+turn timeout this phase introduced).
 
-加えて、起動時バリデーションの抜け（fresh_mode / 空 command）、AGENT 環境変数のファイルシステム到達前ホワイトリスト欠如（プロジェクト規約違反）、本フェーズで死蔵化した `config::TURN_TIMEOUT` 等の Warning 6 件、Info 4 件を検出した。
+## Prior Findings Verification
 
-検証手段: 全 9 ファイル精読、`git diff 5df2cb1^..HEAD` による本フェーズ変更の特定、`cargo fmt --check`（失敗を確認）、`cargo clippy --all-targets`（クリーン）、`cargo test`（24 passed）。
+| Prior finding | Status | Evidence |
+|---|---|---|
+| CR-01 — lock-held `output_covenant` read in `prompt_handler` | **FIXED** | `AppState.output_covenant: String` (src/http.rs:29); `prompt_handler` reads `&state.output_covenant` with no `worker.lock()`; src/main.rs:31 clones the covenant before `Worker::new` moves the profile. Test helper `build_test_state` mirrors the pattern (src/http.rs:236). |
+| CR-02 — cargo fmt diff | **FIXED** | `cargo fmt --check` exits clean (run during this review). Commit 7c73d17. |
+| CR-03 — `model_flag`/`model_value` parsed but never used | **FIXED** | `AgentProfile::spawn_command()` (src/profile.rs:51-58) is called at all three `create_session` sites: `spawn_session` (src/worker.rs:50), `recreate` (src/worker.rs:118-119), `restart` (src/worker.rs:157-158). D-13 both-or-neither semantics covered by tests (h)/(h2)/(h3) at src/profile.rs:332-390. |
+| WR (prior) — dead `config::TURN_TIMEOUT` const | **FIXED** | No `TURN_TIMEOUT` remains anywhere in src/; `process_job` uses `worker.profile.turn_timeout_secs` (src/turn.rs:71). `MCP_TIMEOUT` in config.rs is still live (used by mcp.rs). |
 
-## Critical Issues
-
-### CR-01: prompt_handler が worker Mutex をロックし、ターン実行中は非同期 POST /prompt がブロックする（回帰）
-
-**File:** `src/http.rs:57-60`
-**Issue:** 本フェーズで `build_prompt_body` に covenant 引数が追加され、その取得のために `state.worker.lock().await` が新規導入された。一方 `worker_loop`（`src/turn.rs:91-93`）は `process_job` の実行中ずっと同じ Mutex を保持する（プロファイルの `turn_timeout_secs` が既定 300 秒 × 最大 2 試行 ≒ 600 秒超）。その結果、ターン実行中に届いた `POST /prompt` は covenant のクローン取得だけのために現行ターンの完了までブロックされ、「非同期、turn_id を即返す」という API 契約（lib.rs doc / main.rs の起動メッセージ）が破壊される。v1.0 では covenant は `turn.rs` 内の `format!` リテラルでロック不要だったため、これは本フェーズが導入した回帰。`wait:true` クライアントも prompt ファイル書き込み前に数百秒待たされる。
-**Fix:** プロファイルは起動後イミュータブルなので、Mutex 越しに取得する必要がない。`AppState` に covenant（またはプロファイル全体）を直接持たせる:
-```rust
-// http.rs
-pub struct AppState<M: Mcp + Send + 'static = McpClient> {
-    pub worker: Arc<Mutex<Worker<M>>>,
-    pub turns_dir: PathBuf,
-    pub job_tx: mpsc::Sender<Job>,
-    pub output_covenant: String, // または profile: Arc<AgentProfile>
-}
-
-// prompt_handler 内 — ロック不要に
-let body = build_prompt_body(&req.prompt, &result_path, &status_path, &state.output_covenant);
-```
-main.rs では `Worker::new` にプロファイルを渡す前に `profile.output_covenant.clone()` を取り出して `AppState` に格納する。`build_test_state`（http.rs:224）も同様に更新。
-
-### CR-02: cargo fmt --check が失敗する — CI ゲート（fmt-check）がハード失敗
-
-**File:** `src/profile.rs:63-64,71-72` / `src/turn.rs:23,40-41,167` / `src/worker.rs:23-34` 付近（計 5+ 箇所）
-**Issue:** `cargo fmt --check` を実行すると profile.rs（2 箇所）、turn.rs（3 箇所）、worker.rs に差分が出る。代表例: `src/turn.rs:23` の `build_prompt_body` シグネチャが 1 行 100 文字超、`src/turn.rs:40-41` のメソッドチェーン折返し、`src/profile.rs:71-72` の `if` 条件。プロジェクト規約は「cargo fmt + cargo clippy before commits。CI enforces cargo fmt --check」であり、CI パイプライン（fmt-check → clippy → test）が最初のステップで失敗する。このままでは出荷できない。
-**Fix:**
-```bash
-cargo fmt
-```
-を実行してコミットに含める（rustfmt の自動整形のみで解消、ロジック変更なし）。
-
-### CR-03: model_flag / model_value がパースされるだけで一切使用されない — 文書化済み設定の無言ノーオプ
-
-**File:** `src/profile.rs:31-34` / `src/worker.rs:44,107,147` / `agents/claude.toml:33-35`
-**Issue:** `AgentProfile` は `model_flag` / `model_value` を定義し、`agents/claude.toml` は「モデル選択（使用する場合は両方指定）」と機能するかのように文書化し、テスト（profile.rs:284-315、D-13 参照）はパースのみ検証している。しかし `grep` で確認した結果、これらのフィールドを参照するのは profile.rs のみで、セッション生成 3 箇所（`spawn_session`/`recreate`/`restart`）はすべて `profile.command` のみを `create_session` に渡す。利用者が `model_flag = "--model"` / `model_value = "opus"` を設定しても **何も起こらず、既定モデルで動く**。設定が受理・検証（deny_unknown_fields を通過）されながら無視されるのは無言の誤動作。
-**Fix:** spawn コマンド組み立て時にフラグを付与する（3 箇所で共通化するなら `AgentProfile` にメソッドを追加）:
-```rust
-impl AgentProfile {
-    /// model_flag/model_value を付与した実 spawn コマンドを返す。
-    pub fn spawn_command(&self) -> Vec<String> {
-        let mut cmd = self.command.clone();
-        if let (Some(flag), Some(value)) = (&self.model_flag, &self.model_value) {
-            cmd.push(flag.clone());
-            cmd.push(value.clone());
-        }
-        cmd
-    }
-}
-```
-`worker.rs` の `create_session(&profile.command)` 3 箇所を `create_session(&profile.spawn_command())` に置換。意図的に後続フェーズへ先送りするなら、フィールドを削除するか TOML コメントに「未実装」と明記し、片方のみ指定をエラーにすること（WR 参照）。
+Consistency check: `agents/claude.toml` field names (`command`, `ready_pattern`,
+`fresh_mode`, `clear_command`, `output_covenant`, `trigger_template`) exactly match
+the `#[serde(deny_unknown_fields)]` struct, and the golden test
+(src/turn.rs:157-191) proves byte-identity of the covenant output with v1.0.
 
 ## Warnings
 
-### WR-01: fresh_mode が起動時に検証されず、不正値が実行時（fresh ジョブ到着時）まで検出されない
+### WR-01: `fresh_mode` not validated at startup — invalid values undetected until a fresh job arrives (CARRIED, still open)
 
-**File:** `src/profile.rs:70-82` / `src/turn.rs:47-58`
-**Issue:** `validate_profile` はプレースホルダのみ検証し、`fresh_mode` の値域（"command" / "respawn"）を検証しない。`fresh_mode = "typo"` の TOML は起動に成功し、`fresh: true` のジョブが来た時点で初めて `process_job` が `anyhow::bail!("未知の fresh_mode: ...")` で失敗、そのターンが "failed" になる。プレースホルダ欠落を起動時即エラーとする D-11 の fail-fast 方針と非対称。
-**Fix:** `validate_profile` に追加:
+**File:** `src/profile.rs:86-97` (gap), `src/turn.rs:63` (late failure site)
+**Issue:** `validate_profile` enforces placeholder presence (D-11) but accepts any
+string for `fresh_mode`. Only `"command"` and `"respawn"` are honored
+(src/turn.rs:54-64); anything else hits `anyhow::bail!("未知の fresh_mode: {other}")`
+at runtime, after the job is queued and the prompt file written. A typo like
+`fresh_mode = "respwan"` boots a healthy-looking server where every `fresh:true`
+request fails. Contradicts the phase's own fail-fast principle.
+**Fix:** Add to `validate_profile`:
 ```rust
-if !matches!(p.fresh_mode.as_str(), "command" | "respawn") {
-    anyhow::bail!("agents/{name}.toml: fresh_mode は \"command\" か \"respawn\"（実際: {:?}）", p.fresh_mode);
+if p.fresh_mode != "command" && p.fresh_mode != "respawn" {
+    anyhow::bail!(
+        "agents/{name}.toml: fresh_mode は \"command\" か \"respawn\" のみ（指定値: {}）",
+        p.fresh_mode
+    );
 }
 ```
 
-### WR-02: AGENT 環境変数（agent_name）が未検証のままファイルシステムパスに合流する — 規約違反
+### WR-02: AGENT env var flows unvalidated into filesystem paths — violates project whitelisting convention (CARRIED, still open)
 
-**File:** `src/config.rs:44-46` / `src/profile.rs:50` / `src/main.rs:29`
-**Issue:** プロジェクト規約は「ファイルシステムに到達する識別子はホワイトリスト必須」と定める。`agent_name` は `agents_dir.join(format!("{name}.toml"))`（profile.rs:50）と `turns_base.join(&agent_name)`（main.rs:29）の 2 箇所でファイルシステムに到達するが、検証がない。`AGENT="../../etc/foo"` は agents ディレクトリ外の TOML を読み、`turns` 外にディレクトリを作成する。運用者制御の環境変数なのでリモート攻撃面ではないが、`AGENT="a/b"` のような値が黙って入れ子ディレクトリを生む事故も防げない。
-**Fix:** 起動時（`load_agent_profile` 冒頭または `load_agent_name`）に名前をホワイトリスト検証:
+**File:** `src/config.rs:44` (source), `src/profile.rs:66`, `src/main.rs:37` (sinks)
+**Issue:** `load_agent_name()` returns the raw `AGENT` env value, which is then
+joined into two filesystem paths: `agents_dir.join(format!("{name}.toml"))`
+(src/profile.rs:66) and `turns_base.join(&agent_name)` (src/main.rs:37). A value
+like `AGENT=../../etc/passwd` traverses outside `agents/`, and the turns subdir
+(D-16) is created at an attacker-chosen location via `create_dir_all`. The threat
+actor is the operator/environment, so impact is limited — but CLAUDE.md's convention
+is explicit: "any identifier that hits the filesystem MUST be whitelisted". The new
+`agent_name` identifier introduced by this phase is not.
+**Fix:** Whitelist at load time in `load_agent_name` (or `load_agent_profile`):
 ```rust
-if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-    anyhow::bail!("不正なエージェント名: {name:?}（英数字・ハイフン・アンダースコアのみ）");
+if name.is_empty()
+    || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+{
+    anyhow::bail!("AGENT 名が不正です（許可: 英数字・ハイフン・アンダースコア）: {name:?}");
 }
 ```
 
-### WR-03: config::TURN_TIMEOUT が本フェーズで死蔵化（唯一の利用箇所を削除）
+### WR-03: Hardcoded 700s `wait:true` deadline not derived from `profile.turn_timeout_secs` (CARRIED, still open)
 
-**File:** `src/config.rs:7-8`
-**Issue:** 本フェーズの diff で `use crate::config::TURN_TIMEOUT;` と `Instant::now() + TURN_TIMEOUT`（turn.rs）が削除され、`profile.turn_timeout_secs` に置き換えられた。結果、`pub const TURN_TIMEOUT` は参照ゼロの死蔵定数（`pub` のため clippy 警告も出ない）。doc コメント「1ターンの最大待ち時間」も実態と乖離し、デフォルト値 300 が `profile.rs::default_turn_timeout()` と二重定義になっており将来の divergence 源になる。CLAUDE.md のアーキテクチャ記述（`TURN_TIMEOUT = 300s`）とも不整合化が進む。
-**Fix:** `TURN_TIMEOUT` 定数を削除する。あるいは `default_turn_timeout()` が `TURN_TIMEOUT.as_secs()` を返すよう一本化して single source of truth にする。
-
-### WR-04: wait:true の 700 秒デッドラインが profile.turn_timeout_secs から導出されない
-
-**File:** `src/http.rs:76` / `src/turn.rs:64`
-**Issue:** 同期 `wait:true` パスのデッドラインは `Duration::from_secs(700)` のハードコードで、これは旧 TURN_TIMEOUT(300s)×2 試行 + 余裕という前提で校正された値。本フェーズでターンタイムアウトが `turn_timeout_secs` でプロファイル設定可能になったため（例: 600 秒）、最大試行時間（2×600=1200 秒）が wait デッドラインを超え、ターンがまだ正常進行中なのに 504 を返すケースが生じる。
-**Fix:** デッドラインをプロファイルから導出する。CR-01 の修正で AppState がプロファイル（またはタイムアウト値）を持つようになるため:
+**File:** `src/http.rs:82`
+**Issue:** This phase made the per-turn timeout configurable (src/profile.rs:30,
+consumed at src/turn.rs:71), but the synchronous wait deadline is still the magic
+constant 700 — sized for the old fixed 300s timeout (2 attempts x 300 + margin). A
+profile with `turn_timeout_secs = 600` (a value the test suite itself exercises,
+src/profile.rs:265) allows ~1200s+ worst case per job, so `wait:true` returns 504
+while the turn is still legitimately in flight. Queue depth ahead of the new job
+makes this worse even at defaults. The knob this phase added is silently
+disconnected from the sync contract.
+**Fix:** Carry the value into `AppState` (same pattern as `output_covenant`):
 ```rust
-let wait_deadline_secs = state.turn_timeout_secs * 2 + 100; // 2試行 + 再生成余裕
-let deadline = Instant::now() + Duration::from_secs(wait_deadline_secs);
+// AppState
+pub turn_timeout_secs: u64,
+// prompt_handler
+let deadline = Instant::now() + Duration::from_secs(state.turn_timeout_secs * 2 + 100);
 ```
 
-### WR-05: 空の command 配列が検証を通過し、ht_create_session で不可解なエラーになる
+### WR-04: Empty `command = []` passes validation and fails opaquely at session creation (CARRIED, still open)
 
-**File:** `src/profile.rs:70-82` / `src/worker.rs:44`
-**Issue:** `command = []` の TOML は `validate_profile` を通過し、起動は `client.create_session(&[])` まで進んで ht-mcp 側のエラー（または "セッション ID が取れない"）として表面化する。エラーメッセージから原因（プロファイルの空 command）を辿れない。
-**Fix:** `validate_profile` に追加:
+**File:** `src/profile.rs:86-97` (gap), `src/worker.rs:50` (failure site)
+**Issue:** `validate_profile` does not check that `command` is non-empty. A profile
+with `command = []` parses cleanly, passes validation, and only fails when
+`ht_create_session` receives an empty command array — surfacing as an inscrutable
+MCP error at boot instead of a clear config error.
+**Fix:** Add to `validate_profile`:
 ```rust
 if p.command.is_empty() {
-    anyhow::bail!("agents/{name}.toml: command が空です（例: [\"claude\"]）");
+    anyhow::bail!("agents/{name}.toml: command は空にできません");
 }
 ```
-あわせて `model_flag`/`model_value` の片方のみ指定（"model_flag とセットで指定" の文書化に反する状態）も同所で拒否するとよい（CR-03 修正後に意味を持つ）。
 
-### WR-06: ready 待ちポーリングループが worker.rs 内で 3 回複製されている
+### WR-05: POST /restart (the recovery endpoint) is blocked behind the worker mutex for the full duration of a wedged turn (NEW)
 
-**File:** `src/worker.rs:45-55, 109-121, 148-160`
-**Issue:** 「`create_session` → deadline = startup_timeout_secs → snapshot を 700ms 間隔で polling → ready_pattern を含めば成功 / 期限超過で "claude TUI が起動しない"」というロジックが `spawn_session` / `recreate` / `restart` に逐語的に 3 回出現する（コメント自身が「spawn_session と同じロジック」と認めている）。startup タイムアウトの扱いやエラーメッセージを変更する際に 3 箇所の同期更新が必要で、divergence バグの温床。
-**Fix:** trait メソッドのみで書ける汎用ヘルパに抽出:
-```rust
-async fn wait_ready<M: Mcp>(client: &mut M, session_id: &str, pattern: &str, timeout_secs: u64) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        let snap = client.snapshot(session_id).await?;
-        if snap.contains(pattern) { return Ok(()); }
-        if Instant::now() > deadline { return Err(anyhow!("claude TUI が起動しない:\n{snap}")); }
-        tokio::time::sleep(Duration::from_millis(700)).await;
-    }
-}
-```
+**File:** `src/turn.rs:99` (lock held across `process_job`), `src/http.rs:169` (restart contention)
+**Issue:** `worker_loop` holds the `Arc<Mutex<Worker>>` for the entire
+`process_job` — up to 2 x `turn_timeout_secs` plus two session recreations (~10+
+minutes at defaults; unbounded if a profile raises the timeout). `restart_handler`
+must acquire that same mutex. The documented recovery story for a wedged ht-mcp is
+"full /restart", yet during precisely that failure mode (status file never appears
+because ht-mcp/claude is wedged) the endpoint cannot run until the in-flight attempt
+cycle drains. `command_handler` (src/http.rs:141) is similarly blocked and
+additionally sleeps 1500ms while holding the lock. Pre-existing architecture, but
+the profile-configurable `turn_timeout_secs` introduced by this phase now lets
+profiles widen the unrecoverable window arbitrarily.
+**Fix:** Give `process_job` a cancellation path — e.g. a `tokio::sync::Notify` or
+`watch::channel` signaled by `restart_handler` that the 1s status-poll loop
+(src/turn.rs:72-79) checks, so a restart aborts the in-flight wait promptly. At
+minimum, document the blocking window on `/restart`.
+
+### WR-06: Default CORS `*` permits cross-origin drive-by prompt execution from any website (NEW)
+
+**File:** `src/config.rs:60-75` (default), `src/http.rs:184-188` (wildcard layer)
+**Issue:** `load_cors_origins` defaults to `vec!["*"]`, and `build_router` then sets
+`allow_origin(Any)` + `allow_headers([CONTENT_TYPE])` + POST. JSON POSTs are
+non-simple requests, so a restrictive policy would stop them at preflight — but the
+wildcard default makes the preflight succeed for every origin. Any web page open in
+a browser on the same host can `fetch("http://127.0.0.1:8080/prompt", {method:"POST",
+...})`, drive the local Claude session (which has filesystem access), and read the
+result back. Loopback binding does not mitigate this: the victim's browser is the
+confused deputy. Pre-existing default, but `config.rs` is in scope and the exposure
+compounds with the prompt-execution capability.
+**Fix:** Default to deny (empty allow list) or localhost origins only, requiring an
+explicit `CORS_ORIGINS=*` opt-in. At minimum, emit a prominent startup warning when
+running with `*`.
+
+### WR-07: ready-wait polling loop triplicated across worker.rs (CARRIED, still open)
+
+**File:** `src/worker.rs:52-61`, `src/worker.rs:123-132`, `src/worker.rs:162-171`
+**Issue:** The snapshot / `contains(ready_pattern)` / deadline / sleep(700ms) loop is
+copy-pasted three times (`spawn_session`, `recreate`, `restart`). Three copies invite
+drift — a future timeout or pattern tweak applied to only one site silently changes
+recovery behavior relative to boot behavior.
+**Fix:** Extract a helper callable from all three sites, e.g.
+`async fn wait_ready<M: Mcp>(client: &mut M, session_id: &str, ready_pattern: &str, startup_timeout_secs: u64) -> Result<()>`.
 
 ## Info
 
-### IN-01: テストが相対パス "agents" で実 TOML をロードし、CWD に依存する
+### IN-01: Tests load the real profile via CWD-relative `"agents"` path (CARRIED, still open)
 
-**File:** `src/turn.rs:157` / `src/http.rs:227`
-**Issue:** ゴールデンテストと `build_test_state` は `Path::new("agents")` で実ファイルをロードする。`cargo test` がクレートルートから走る限り動くが、ワークスペース化や別 CWD からの実行で全 http テスト + ゴールデンテストが壊れる。
-**Fix:** `Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/agents"))` を使い CWD 非依存にする。
+**File:** `src/http.rs:233`, `src/turn.rs:164`
+**Issue:** `load_agent_profile("claude", Path::new("agents"))` depends on the test
+process CWD being the crate root. `cargo test` guarantees this today, but running
+the tests from another directory (or a future workspace re-layout) breaks them with
+a confusing "claude.toml が見つかりません".
+**Fix:** Anchor on the manifest dir:
+`Path::new(env!("CARGO_MANIFEST_DIR")).join("agents")`.
 
-### IN-02: CORS ログ行に `[profile]` タグが付いている
+### IN-02: CORS startup log line is tagged `[profile]` (CARRIED, still open)
 
-**File:** `src/main.rs:45`
-**Issue:** `eprintln!("[profile] CORS 許可オリジン: ...")` — CORS 設定はプロファイル由来ではなく、規約のブラケット付きソースタグとして誤分類。
-**Fix:** `[cors]` または `[config]` タグに変更。
+**File:** `src/main.rs:54`
+**Issue:** `eprintln!("[profile] CORS 許可オリジン: ...")` — CORS configuration is
+not profile-related; the bracketed-tag logging convention loses meaning when tags
+are inaccurate.
+**Fix:** Use `[cors]` (or `[http]`).
 
-### IN-03: deny_unknown_fields テストのアサーションが空虚
+### IN-03: `deny_unknown_fields` test assertion is vacuous (CARRIED, still open)
 
-**File:** `src/profile.rs:278-281`
-**Issue:** `assert!(!err.to_string().is_empty())` は anyhow エラーなら常に真で、「未知フィールドが拒否された」ことを実質検証していない（unwrap_err がエラー発生自体は保証するが、エラー理由は不問）。プレースホルダ検証エラー等でも通る。
-**Fix:** `assert!(err.to_string().contains("unknown_field") || format!("{err:#}").contains("unknown_field"))` のように原因フィールド名を検証する。
+**File:** `src/profile.rs:293-296`
+**Issue:** The test asserts `!err.to_string().is_empty()` — any error message
+passes, so the test would still pass if `deny_unknown_fields` were removed and the
+failure came from somewhere else entirely. It verifies *an* error occurs, not the
+guarded behavior.
+**Fix:** Assert the message mentions the offending key:
+`assert!(err.to_string().contains("unknown_field"))` (toml's serde error includes
+the field name).
 
-### IN-04: fresh_mode = "respawn" のエージェントでも clear_command が必須フィールド
+### IN-04: `clear_command` is mandatory even for `fresh_mode = "respawn"` profiles (CARRIED, still open)
 
-**File:** `src/profile.rs:19-20` / `agents/claude.toml:15-16`
-**Issue:** `clear_command` は非 Option の必須フィールドのため、respawn 方式のエージェント（clear コマンドを持たない TUI）でもダミー値の記入を強制される。
-**Fix:** `Option<String>`（または `#[serde(default)]`）にし、`validate_profile` で「fresh_mode = "command" なら clear_command 必須（非空）」を検証する。
+**File:** `src/profile.rs:20`
+**Issue:** `clear_command: String` has no default and is unused when
+`fresh_mode = "respawn"` — respawn-style agent profiles must supply a meaningless
+value to satisfy the deserializer.
+**Fix:** Make it `Option<String>` (or `#[serde(default)]`) and require it in
+`validate_profile` only when `fresh_mode == "command"` (pairs with WR-01's fix).
+
+### IN-05: turn_id collision possible under concurrent POST /prompt within the same millisecond (NEW)
+
+**File:** `src/http.rs:53`
+**Issue:** `chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f")` is the sole uniqueness
+source. axum serves requests concurrently, so two POSTs in the same millisecond
+produce identical turn_ids: the second `tokio::fs::write` overwrites the first
+prompt file and two jobs with the same id enter the queue — cross-contaminated
+results. Low probability, silent corruption when it hits.
+**Fix:** Add a process-wide `AtomicU64` sequence suffix, or create the prompt file
+with `OpenOptions::create_new` and regenerate the id on `AlreadyExists`.
+
+### IN-06: Double session recreation on retry when `fresh_mode = "respawn"` (NEW)
+
+**File:** `src/turn.rs:60` and `src/turn.rs:85`
+**Issue:** On attempt-1 timeout, `process_job` calls `worker.recreate()` (line 85);
+attempt 2 then immediately calls `recreate()` again via the `"respawn"` fresh branch
+(line 60). Two back-to-back full session startups (each up to
+`startup_timeout_secs`) where one suffices. Correctness unaffected.
+**Fix:** Track a `just_recreated` flag across the attempt loop and skip the
+fresh-respawn recreate when set, or accept and document the cost.
+
+### IN-07: Blocking `Path::exists()` stat calls inside async handlers/loops (NEW)
+
+**File:** `src/http.rs:83`, `src/http.rs:111`, `src/turn.rs:73`
+**Issue:** `std::path::Path::exists()` performs synchronous I/O on the tokio runtime
+thread. These are cheap local `stat`s in 1s-interval loops, so impact is negligible
+today; noted for consistency with the codebase's otherwise-async fs usage
+(`tokio::fs` everywhere else).
+**Fix:** `tokio::fs::try_exists(&path).await.unwrap_or(false)` when touching these
+lines anyway.
 
 ---
 
-_Reviewed: 2026-06-11T08:30:00Z_
+_Reviewed: 2026-06-11T09:35:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
