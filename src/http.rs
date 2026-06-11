@@ -53,7 +53,12 @@ async fn prompt_handler<M: Mcp + Send + 'static>(
     let status_path = state.turns_dir.join(format!("status-{turn_id}.json"));
 
     // prompt ファイルを先に書く（GET が即「running」を返せるように）
-    let body = build_prompt_body(&req.prompt, &result_path, &status_path);
+    // output_covenant は worker の profile から取得（profile.output_covenant）
+    let covenant = {
+        let w = state.worker.lock().await;
+        w.profile.output_covenant.clone()
+    };
+    let body = build_prompt_body(&req.prompt, &result_path, &status_path, &covenant);
     tokio::fs::write(&prompt_path, body).await.map_err(ise)?;
 
     // ジョブをキュー投入
@@ -208,6 +213,7 @@ mod tests {
     use crate::worker::Worker;
     use axum::body::Body;
     use axum::http::Request;
+    use std::path::Path;
     use tempfile::tempdir;
     use tower::ServiceExt;
 
@@ -217,11 +223,15 @@ mod tests {
     /// （CONTEXT "Constraints" line 150）。
     fn build_test_state(turns_dir: PathBuf) -> (Arc<AppState<FakeMcp>>, mpsc::Receiver<Job>) {
         let (job_tx, job_rx) = mpsc::channel(64);
+        // プロファイルは実 TOML からロード（Pitfall 4: turns_dir は main.rs 経由でなくここでそのまま使う）。
+        let profile = crate::profile::load_agent_profile("claude", Path::new("agents"))
+            .expect("テスト用 agents/claude.toml のロード失敗");
         // FakeMcp は scripted reply 不要（本テストでは turn_handler 経路のみ叩く）。
         let worker = Worker::<FakeMcp>::from_parts(
             FakeMcp::new(),
             "test-session".to_string(),
             "/dev/null".to_string(),
+            profile,
         );
         let worker = Arc::new(Mutex::new(worker));
         let state = Arc::new(AppState {

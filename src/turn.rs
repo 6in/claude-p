@@ -1,4 +1,4 @@
-// ── ターン処理（バックグラウンド）────────────────────────────────────────
+// ── ターン処理（ジョブ1件の実行 + ターンファイル読み書き）──────────────────
 
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -8,7 +8,6 @@ use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
 
-use crate::config::TURN_TIMEOUT;
 use crate::mcp::Mcp;
 use crate::worker::Worker;
 
@@ -19,20 +18,13 @@ pub struct Job {
 }
 
 /// turn_id 用の prompt ファイル本文を組み立てる。
-pub fn build_prompt_body(task: &str, result_path: &Path, status_path: &Path) -> String {
-    format!(
-        "{task}
-
-────────────────────────────────
-【ht-webif 出力規約】上のタスクを実行し、次のとおりファイルに書き出してください:
-1. 回答本文を次のファイルに書く: {result}
-2. 完了したら最後に次のファイルを作る: {status}
-   中身は JSON 1行: {{\"status\":\"done\"}}（失敗時は {{\"status\":\"failed\",\"error\":\"理由\"}}）
-status ファイルが完了検知シグナルです。必ず result を書き終えてから最後に status を書いてください。",
-        task = task,
-        result = result_path.display(),
-        status = status_path.display(),
-    )
+/// covenant_template は agents/<name>.toml の output_covenant フィールド。
+/// {result_path} / {status_path} を実パスに置換して返す（D-09 str::replace のみ使用）。
+pub fn build_prompt_body(task: &str, result_path: &Path, status_path: &Path, covenant_template: &str) -> String {
+    let body = covenant_template
+        .replace("{result_path}", &result_path.display().to_string())
+        .replace("{status_path}", &status_path.display().to_string());
+    format!("{task}\n\n{body}")
 }
 
 /// 1ジョブを実行する。完了すれば claude が status ファイルを書く。
@@ -44,20 +36,32 @@ pub(crate) async fn process_job<M: Mcp + Send>(
 ) -> Result<()> {
     let prompt_path = turns_dir.join(format!("prompt-{}.txt", job.turn_id));
     let status_path = turns_dir.join(format!("status-{}.json", job.turn_id));
-    let trigger = format!(
-        "{} を読んで、その指示に従ってください。",
-        prompt_path.display()
-    );
+    // トリガーメッセージ: profile の trigger_template から {prompt_path} を置換（D-10）
+    let trigger = worker.profile.trigger_template
+        .replace("{prompt_path}", &prompt_path.display().to_string());
 
     worker.ensure_healthy().await?;
     for attempt in 1..=2u32 {
         if job.fresh {
-            worker.submit_line("/clear").await?;
+            // fresh_mode に応じてリセット方式を分岐（D-04/PROF-04）
+            match worker.profile.fresh_mode.as_str() {
+                "command" => {
+                    let clear_command = worker.profile.clear_command.clone();
+                    worker.submit_line(&clear_command).await?;
+                }
+                "respawn" => {
+                    worker.recreate().await?;
+                }
+                other => {
+                    anyhow::bail!("未知の fresh_mode: {other}");
+                }
+            }
             tokio::time::sleep(Duration::from_millis(1000)).await;
         }
         worker.submit_line(&trigger).await?;
 
-        let deadline = Instant::now() + TURN_TIMEOUT;
+        // プロファイルのターンタイムアウトを使用（PROF-05）
+        let deadline = Instant::now() + Duration::from_secs(worker.profile.turn_timeout_secs);
         loop {
             if status_path.exists() {
                 return Ok(()); // claude が status を書いた = 完了
@@ -113,7 +117,6 @@ pub async fn read_turn(turns_dir: &Path, turn_id: &str) -> Result<Value> {
     Ok(json!({ "turn_id": turn_id, "status": status, "result": result }))
 }
 
-// ── 単体テスト（co-located、D-06）─────────────────────────────────────
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,11 +128,43 @@ mod tests {
     fn build_prompt_body_includes_task_and_paths() {
         let result_path = PathBuf::from("/tmp/result-X.txt");
         let status_path = PathBuf::from("/tmp/status-X.json");
-        let body = build_prompt_body("やってほしいこと", &result_path, &status_path);
+        let body = build_prompt_body(
+            "やってほしいこと",
+            &result_path,
+            &status_path,
+            "x {result_path} {status_path}",
+        );
         assert!(body.contains("やってほしいこと"));
         assert!(body.contains("/tmp/result-X.txt"));
         assert!(body.contains("/tmp/status-X.json"));
-        assert!(body.contains("【ht-webif 出力規約】"));
+    }
+
+    // ゴールデンテスト（D-12）: build_prompt_body の出力が v1.0 format! 出力とバイト一致すること。
+    // 期待値出典: agents/claude.toml output_covenant + v1.0 build_prompt_body format! リテラル。
+    #[test]
+    fn build_prompt_body_covenant_matches_v1_output() {
+        // v1.0 build_prompt_body の format! が生成したバイト列（D-12 golden string）
+        // 出典: src/turn.rs の旧 format! リテラル（タスク実行前に固定）
+        const EXPECTED: &str = concat!(
+            "やってほしいこと\n\n",
+            "【ht-webif 出力規約】上のタスクを実行し、次のとおりファイルに書き出してください:\n",
+            "1. 回答本文を次のファイルに書く: /tmp/result-X.txt\n",
+            "2. 完了したら最後に次のファイルを作る: /tmp/status-X.json\n",
+            "   中身は JSON 1行: {\"status\":\"done\"}（失敗時は {\"status\":\"failed\",\"error\":\"理由\"}）\n",
+            "status ファイルが完了検知シグナルです。必ず result を書き終えてから最後に status を書いてください。",
+        );
+
+        let profile = crate::profile::load_agent_profile("claude", std::path::Path::new("agents"))
+            .expect("agents/claude.toml のロード失敗 — golden test には実ファイルが必要");
+        let result_path = PathBuf::from("/tmp/result-X.txt");
+        let status_path = PathBuf::from("/tmp/status-X.json");
+        let actual = build_prompt_body(
+            "やってほしいこと",
+            &result_path,
+            &status_path,
+            &profile.output_covenant,
+        );
+        assert_eq!(actual, EXPECTED, "agents/claude.toml の出力規約が v1.0 と一致しない");
     }
 
     // turn_id formatter は YYYYMMDD-HHMMSS-mmm 形式（19 文字、3 セグメント、全数字）になること。
