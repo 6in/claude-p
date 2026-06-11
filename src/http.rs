@@ -59,7 +59,12 @@ async fn prompt_handler<M: Mcp + Send + 'static>(
     // output_covenant は AppState から直接取得（ロックフリー）。
     // プロファイルは起動後イミュータブルなので worker Mutex を取る必要はなく、
     // ターン実行中（最大 600s）でも POST /prompt が即応できる（CR-01 解消）。
-    let body = build_prompt_body(&req.prompt, &result_path, &status_path, &state.output_covenant);
+    let body = build_prompt_body(
+        &req.prompt,
+        &result_path,
+        &status_path,
+        &state.output_covenant,
+    );
     tokio::fs::write(&prompt_path, body).await.map_err(ise)?;
 
     // ジョブをキュー投入

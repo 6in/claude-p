@@ -76,16 +76,15 @@ pub fn load_agent_profile(name: &str, agents_dir: &Path) -> anyhow::Result<Agent
             }
         )
     })?;
-    let profile: AgentProfile = toml::from_str(&content)
-        .with_context(|| format!("agents/{name}.toml のパースに失敗"))?;
+    let profile: AgentProfile =
+        toml::from_str(&content).with_context(|| format!("agents/{name}.toml のパースに失敗"))?;
     validate_profile(&profile, name)?;
     Ok(profile)
 }
 
 /// プロファイルの必須プレースホルダを検証する。欠落があれば即エラー（D-11）。
 fn validate_profile(p: &AgentProfile, name: &str) -> anyhow::Result<()> {
-    if !p.output_covenant.contains("{result_path}")
-        || !p.output_covenant.contains("{status_path}")
+    if !p.output_covenant.contains("{result_path}") || !p.output_covenant.contains("{status_path}")
     {
         anyhow::bail!(
             "agents/{name}.toml: output_covenant に {{result_path}} と {{status_path}} が必要"

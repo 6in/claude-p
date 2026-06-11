@@ -31,7 +31,10 @@ impl Worker<McpClient> {
     }
 
     /// ht-mcp 起動 → MCP ハンドシェイク → claude セッション作成。
-    pub(crate) async fn boot(ht_mcp_path: &str, profile: &AgentProfile) -> Result<(McpClient, String)> {
+    pub(crate) async fn boot(
+        ht_mcp_path: &str,
+        profile: &AgentProfile,
+    ) -> Result<(McpClient, String)> {
         let mut client = McpClient::spawn(ht_mcp_path).await?;
         client.handshake().await?;
         let session_id = Self::spawn_session(&mut client, profile).await?;
@@ -40,7 +43,10 @@ impl Worker<McpClient> {
 
     /// claude TUI セッションを作り、ready になるまで待ってセッション ID を返す。
     /// `McpClient` 具象に紐づく（本番起動経路）。
-    pub(crate) async fn spawn_session(client: &mut McpClient, profile: &AgentProfile) -> Result<String> {
+    pub(crate) async fn spawn_session(
+        client: &mut McpClient,
+        profile: &AgentProfile,
+    ) -> Result<String> {
         let session_id = client.create_session(&profile.spawn_command()).await?;
         let deadline = Instant::now() + Duration::from_secs(profile.startup_timeout_secs);
         loop {
@@ -63,7 +69,12 @@ impl<M: Mcp + Send> Worker<M> {
     /// `#[cfg(test)]` で本番ビルドからは見えず、`pub(crate)` で同一クレート内テストからのみ参照可能。
     /// 03-04 で http::tests::build_test_state から呼ばれる。
     #[cfg(test)]
-    pub(crate) fn from_parts(client: M, session_id: String, ht_mcp_path: String, profile: AgentProfile) -> Self {
+    pub(crate) fn from_parts(
+        client: M,
+        session_id: String,
+        ht_mcp_path: String,
+        profile: AgentProfile,
+    ) -> Self {
         Self {
             client,
             session_id,

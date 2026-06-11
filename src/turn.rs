@@ -20,7 +20,12 @@ pub struct Job {
 /// turn_id 用の prompt ファイル本文を組み立てる。
 /// covenant_template は agents/<name>.toml の output_covenant フィールド。
 /// {result_path} / {status_path} を実パスに置換して返す（D-09 str::replace のみ使用）。
-pub fn build_prompt_body(task: &str, result_path: &Path, status_path: &Path, covenant_template: &str) -> String {
+pub fn build_prompt_body(
+    task: &str,
+    result_path: &Path,
+    status_path: &Path,
+    covenant_template: &str,
+) -> String {
     let body = covenant_template
         .replace("{result_path}", &result_path.display().to_string())
         .replace("{status_path}", &status_path.display().to_string());
@@ -37,7 +42,9 @@ pub(crate) async fn process_job<M: Mcp + Send>(
     let prompt_path = turns_dir.join(format!("prompt-{}.txt", job.turn_id));
     let status_path = turns_dir.join(format!("status-{}.json", job.turn_id));
     // トリガーメッセージ: profile の trigger_template から {prompt_path} を置換（D-10）
-    let trigger = worker.profile.trigger_template
+    let trigger = worker
+        .profile
+        .trigger_template
         .replace("{prompt_path}", &prompt_path.display().to_string());
 
     worker.ensure_healthy().await?;
@@ -164,7 +171,10 @@ mod tests {
             &status_path,
             &profile.output_covenant,
         );
-        assert_eq!(actual, EXPECTED, "agents/claude.toml の出力規約が v1.0 と一致しない");
+        assert_eq!(
+            actual, EXPECTED,
+            "agents/claude.toml の出力規約が v1.0 と一致しない"
+        );
     }
 
     // turn_id formatter は YYYYMMDD-HHMMSS-mmm 形式（19 文字、3 セグメント、全数字）になること。

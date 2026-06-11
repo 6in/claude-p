@@ -3,7 +3,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{mpsc, Mutex};
 
-use ht_webif::config::{load_agent_name, load_agents_dir, load_cors_origins, load_ht_mcp_path, load_port, load_turns_dir};
+use ht_webif::config::{
+    load_agent_name, load_agents_dir, load_cors_origins, load_ht_mcp_path, load_port,
+    load_turns_dir,
+};
 use ht_webif::http::{build_router, AppState};
 use ht_webif::profile::load_agent_profile;
 use ht_webif::turn::{worker_loop, Job};
