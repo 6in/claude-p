@@ -41,7 +41,7 @@ impl Worker<McpClient> {
     /// claude TUI セッションを作り、ready になるまで待ってセッション ID を返す。
     /// `McpClient` 具象に紐づく（本番起動経路）。
     pub(crate) async fn spawn_session(client: &mut McpClient, profile: &AgentProfile) -> Result<String> {
-        let session_id = client.create_session(&profile.command).await?;
+        let session_id = client.create_session(&profile.spawn_command()).await?;
         let deadline = Instant::now() + Duration::from_secs(profile.startup_timeout_secs);
         loop {
             let snap = client.snapshot(&session_id).await?;
@@ -104,7 +104,7 @@ impl<M: Mcp + Send> Worker<M> {
     /// trait Mcp のメソッドのみで実装できるので汎用 impl に置ける。
     pub(crate) async fn recreate(&mut self) -> Result<()> {
         let old = self.session_id.clone();
-        let cmd = self.profile.command.clone();
+        let cmd = self.profile.spawn_command();
         let new_id = self.client.create_session(&cmd).await?;
         // ready 待ち（spawn_session と同じロジック）。
         let deadline = Instant::now() + Duration::from_secs(self.profile.startup_timeout_secs);
@@ -143,7 +143,7 @@ impl<M: Mcp + Restartable + Send> Worker<M> {
     /// （Restartable::respawn の中で *self = new で旧 client が drop される）。
     pub async fn restart(&mut self) -> Result<()> {
         self.client.respawn(&self.ht_mcp_path).await?;
-        let cmd = self.profile.command.clone();
+        let cmd = self.profile.spawn_command();
         let new_id = self.client.create_session(&cmd).await?;
         // ready 待ち（spawn_session と同じロジック）。
         let deadline = Instant::now() + Duration::from_secs(self.profile.startup_timeout_secs);

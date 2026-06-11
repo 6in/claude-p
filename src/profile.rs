@@ -42,6 +42,22 @@ fn default_turn_timeout() -> u64 {
     300
 }
 
+impl AgentProfile {
+    /// ht-mcp の create_session に渡す実際の spawn コマンドを組み立てる。
+    ///
+    /// `model_flag` と `model_value` の両方が指定されている場合のみ、
+    /// フラグと値を末尾に追加する（D-13: 片方のみは無視）。
+    /// 両方未指定の場合は `command` そのままを返す。
+    pub fn spawn_command(&self) -> Vec<String> {
+        let mut cmd = self.command.clone();
+        if let (Some(flag), Some(value)) = (&self.model_flag, &self.model_value) {
+            cmd.push(flag.clone());
+            cmd.push(value.clone());
+        }
+        cmd
+    }
+}
+
 /// エージェント名と探索ディレクトリからプロファイルを読み込む。
 ///
 /// 失敗時は探索パスと利用可能プロファイル一覧を含むエラーを返す。
@@ -312,5 +328,65 @@ model_value = "opus"
         let profile = load_agent_profile("withmodel", dir.path()).unwrap();
         assert_eq!(profile.model_flag, Some("--model".to_string()));
         assert_eq!(profile.model_value, Some("opus".to_string()));
+    }
+
+    // (h) spawn_command: model_flag/model_value 未指定なら command と同一
+    #[test]
+    fn spawn_command_without_model_equals_command() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("nomodel.toml"), minimal_valid_toml()).unwrap();
+        let profile = load_agent_profile("nomodel", dir.path()).unwrap();
+        assert_eq!(profile.spawn_command(), profile.command);
+    }
+
+    // (h2) spawn_command: model_flag/model_value 両方指定なら command 末尾にフラグと値が追加される
+    #[test]
+    fn spawn_command_appends_flag_and_value_when_both_specified() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("withmodel.toml"),
+            r#"
+command = ["claude"]
+ready_pattern = "auto mode"
+fresh_mode = "command"
+clear_command = "/clear"
+output_covenant = "{result_path} {status_path}"
+trigger_template = "{prompt_path}"
+model_flag = "--model"
+model_value = "opus"
+"#,
+        )
+        .unwrap();
+        let profile = load_agent_profile("withmodel", dir.path()).unwrap();
+        assert_eq!(
+            profile.spawn_command(),
+            vec!["claude", "--model", "opus"],
+            "model_flag/model_value 両指定で spawn コマンドに追加されること"
+        );
+    }
+
+    // (h3) spawn_command: model_flag のみ指定でも追加されない（D-13: 両方指定時のみ有効）
+    #[test]
+    fn spawn_command_does_not_append_when_only_flag_specified() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("flagonly.toml"),
+            r#"
+command = ["claude"]
+ready_pattern = "auto mode"
+fresh_mode = "command"
+clear_command = "/clear"
+output_covenant = "{result_path} {status_path}"
+trigger_template = "{prompt_path}"
+model_flag = "--model"
+"#,
+        )
+        .unwrap();
+        let profile = load_agent_profile("flagonly", dir.path()).unwrap();
+        assert_eq!(
+            profile.spawn_command(),
+            vec!["claude"],
+            "model_flag のみ指定では spawn コマンドに追加されないこと（D-13）"
+        );
     }
 }
