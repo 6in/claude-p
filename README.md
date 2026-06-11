@@ -60,9 +60,8 @@ cargo build --release
 3. 起動成功時のログ例:
 
    ```
-   ht-mcp パス: /home/parallels/.cargo/bin/ht-mcp
-   claude セッション: <session-id>
-   ターンディレクトリ: /path/to/ht-mcp-sample/turns
+   [profile] エージェント: claude
+   [profile] ターンディレクトリ: /path/to/ht-mcp-sample/turns/claude
    WebIF 起動: http://127.0.0.1:8080
    ```
 
@@ -70,14 +69,21 @@ cargo build --release
 
 ### 複数インスタンス運用
 
-同一ホストで複数の WebIF を走らせる場合は `PORT` と `TURNS_DIR` を分けて起動する:
+同一ホストで複数の WebIF を走らせる場合は `PORT` と `AGENT` を分けて起動する（ターン成果物は常に `<TURNS_DIR>/<agent-name>/` に書き出されるため、`AGENT` を変えるだけで自動的にサブディレクトリが分離される）:
+
+```bash
+PORT=8081 AGENT=claude cargo run --release
+PORT=8082 AGENT=codex  cargo run --release
+```
+
+同一エージェントを異なるポートで動かす場合は `TURNS_DIR` も変えること:
 
 ```bash
 PORT=8081 TURNS_DIR=./turns-8081 cargo run --release
 PORT=8082 TURNS_DIR=./turns-8082 cargo run --release
 ```
 
-既定値はそれぞれ `8080` と `./turns`。`.env` でも設定可能（`.env.example` を参照）。
+既定値はそれぞれ `PORT=8080`、`TURNS_DIR=./turns`、`AGENT=claude`。`.env` でも設定可能（`.env.example` を参照）。
 
 ## 動作確認
 
@@ -260,14 +266,16 @@ curl -s -X POST http://127.0.0.1:8080/restart
 |------|--------|------|
 | `HT_MCP_PATH` | `ht-mcp` | `ht-mcp` バイナリのパス。未設定なら PATH 上を探索 |
 | `PORT` | `8080` | HTTP listener のポート番号。多重起動時はインスタンス毎に変える |
-| `TURNS_DIR` | `./turns` | ターン成果物の出力先ディレクトリ。多重起動時は PORT と一緒に分離する |
+| `AGENT` | `claude` | 使用するエージェントプロファイル名。`agents/<name>.toml` を読む。未指定なら `claude`（後方互換） |
+| `AGENTS_DIR` | `./agents` | プロファイル TOML の探索ディレクトリ |
+| `TURNS_DIR` | `./turns` | ターン成果物の出力先ベースディレクトリ。**実際の書き込み先は常に `<TURNS_DIR>/<agent-name>/`**（D-16）。これは v1.0 で `TURNS_DIR` を明示指定していた場合と非互換になるため注意 |
 | `CORS_ORIGINS` | `*` | CORS 許可オリジン（カンマ区切り）。`*` で全許可。Web フロントから直接叩く場合に絞り込める |
 
 設定の優先順位: **実環境変数 > `.env` > 既定値**（`dotenvy` の標準動作）。`.env.example` をコピーして `.env` を作成し、必要に応じて編集すること。
 
 ## ターン成果物
 
-各ターンの実行結果は `turns/` ディレクトリ（起動時の CWD からの相対パス）に以下の 3 点セットとして保存される:
+各ターンの実行結果は `turns/<agent-name>/` ディレクトリ（例: `AGENT=claude` のとき `turns/claude/`）に以下の 3 点セットとして保存される:
 
 | ファイル | 書く人 | 内容 |
 |----------|--------|------|

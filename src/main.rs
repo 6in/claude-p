@@ -15,17 +15,20 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let ht_mcp_path = load_ht_mcp_path();
 
-    // プロファイルロード（Task 3 で起動バナー・D-16 ターンサブディレクトリを追加）
+    // プロファイルロード（AGENT / AGENTS_DIR 環境変数を解決）
     let agent_name = load_agent_name();
     let agents_dir = load_agents_dir()?;
     let profile = load_agent_profile(&agent_name, &agents_dir)?;
+    eprintln!("[profile] エージェント: {agent_name}");
 
     // 1. ht-mcp 起動 + MCP ハンドシェイク + claude セッション
     let worker = Worker::new(ht_mcp_path, profile).await?;
 
-    // 2. ターンディレクトリ（D-16 agent-name サブディレクトリは Task 3 で追加）
-    let turns_dir = load_turns_dir()?;
+    // 2. ターンディレクトリ（D-16: 常に <TURNS_DIR>/<agent-name>/ を使う）
+    let turns_base = load_turns_dir()?;
+    let turns_dir = turns_base.join(&agent_name);
     tokio::fs::create_dir_all(&turns_dir).await?;
+    eprintln!("[profile] ターンディレクトリ: {}", turns_dir.display());
 
     // 3. バックグラウンドのターン実行ループ
     let worker = Arc::new(Mutex::new(worker));
@@ -39,12 +42,20 @@ async fn main() -> Result<()> {
         job_tx,
     });
     let cors_origins = load_cors_origins();
+    eprintln!("[profile] CORS 許可オリジン: {:?}", cors_origins);
     let app = build_router(state, cors_origins);
 
     let port = load_port()?;
     let addr = format!("127.0.0.1:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("WebIF 起動: http://{addr}");
+    eprintln!("WebIF 起動: http://{addr}");
+    eprintln!("  POST /prompt       {{\"prompt\":\"...\"}}             → 非同期、turn_id を即返す");
+    eprintln!(
+        "  POST /prompt       {{\"prompt\":\"...\",\"wait\":true}}  → 完了まで待って結果を返す"
+    );
+    eprintln!("  GET  /turns/{{id}}   → ターンの状態・結果");
+    eprintln!("  POST /command      {{\"text\":\"/clear\"}}");
+    eprintln!("  POST /restart      → ht-mcp ごと再起動");
     axum::serve(listener, app).await?;
     Ok(())
 }
