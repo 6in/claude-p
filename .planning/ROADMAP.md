@@ -23,7 +23,7 @@
 **Milestone Goal:** ht-webif を Claude 専用から脱却させ、エージェントプロファイル（`agents/*.toml`）で任意の対話型 CLI エージェントを駆動できるようにし、多重インスタンスによる並列オーケストレーションの土台を作る。
 
 - [x] **Phase 4: Agent Profile Abstraction** - Claude を最初のプロファイルとして再定義する純粋リファクタ（挙動変化なし） (completed 2026-06-11)
-- [ ] **Phase 5: Codex CLI and OpenCode Validation** - Codex / OpenCode の実機 E2E 検証とプロファイル確立
+- [x] **Phase 5: Codex CLI and OpenCode Validation** - Codex / OpenCode の実機 E2E 検証とプロファイル確立 (completed 2026-06-12)
 - [ ] **Phase 6: Multi-Instance Parallel Foundation** - 観測性エンドポイントと多重インスタンス並列起動の土台
 
 ## Phase Details
@@ -72,7 +72,7 @@
 **Wave 1** *(並列 — ファイル重複なし)*
 
 - [x] 05-01-PLAN.md — Codex プロファイル + E2E スクリプト（agents/codex.toml, scripts/e2e-codex.sh; AGNT-01/02）
-- [ ] 05-02-PLAN.md — OpenCode プロファイル + setup/E2E スクリプト + ドキュメント（agents/opencode.toml, scripts/setup-opencode.sh, scripts/e2e-opencode.sh, README; AGNT-03/04）
+- [x] 05-02-PLAN.md — OpenCode プロファイル + setup/E2E スクリプト + ドキュメント（agents/opencode.toml, scripts/setup-opencode.sh, scripts/e2e-opencode.sh, README; AGNT-03/04）
 
 **Research flag**: RESOLVED — 05-RESEARCH.md が Codex/OpenCode を実機検証済み（Codex HIGH / OpenCode /turn workaround HIGH）。プロファイル値は確定。
 
@@ -98,7 +98,7 @@
 | 2. Module Refactor | v1.0 | 4/4 | Complete | 2026-05-25 |
 | 3. Testing & CI Automation | v1.0 | 6/6 | Complete | 2026-05-25 |
 | 4. Agent Profile Abstraction | v2.0 | 4/4 | Complete    | 2026-06-11 |
-| 5. Codex CLI and OpenCode Validation | v2.0 | 1/2 | In Progress|  |
+| 5. Codex CLI and OpenCode Validation | v2.0 | 2/2 | Complete   | 2026-06-12 |
 | 6. Multi-Instance Parallel Foundation | v2.0 | 0/? | Not started | - |
 
 ---
