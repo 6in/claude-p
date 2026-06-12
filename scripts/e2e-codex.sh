@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# e2e-codex.sh — Codex CLI エージェントの E2E 検証スクリプト。
+#
+# ht-webif を AGENT=codex PORT=8081 で起動し、次の 3 段階を検証する:
+#   1. 基本 E2E (AGNT-01): POST /prompt → result 非空 + status=done
+#   2. 履歴シード (ターン1): 固有の数値を記憶させる
+#   3. fresh 履歴隔離 (AGNT-02 + D-10): fresh:true で前ターンの情報が漏れないことを確認
+#
+# 前提条件:
+#   - codex が PATH 上にあること（~/.local/bin/codex）
+#   - codex login 実行済み（~/.codex/auth.json 存在 + ChatGPT Plus 認証）
+#   - jq が PATH 上にあること（結果の JSON パース用）
+#   - curl が PATH 上にあること
+#   - agents/codex.toml が存在すること（Task 1 で作成）
+#
+# 使い方: bash scripts/e2e-codex.sh（プロジェクトルートから実行）
+# CI には繋がない（実エージェント + 実課金が必要なため — D-08）
+
+set -euo pipefail
+
+# --- パス定数 ---
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WEBIF_DIR="$SCRIPT_DIR/.."
+# e2e-codex.sh は専用ポート 8081 を使用（smoke.sh の 8080 と分離 — D-07）
+PORT="${PORT:-8081}"
+BASE_URL="http://127.0.0.1:${PORT}"
+LOG_FILE="/tmp/ht-webif-e2e-codex-$$.log"
+
+# --- グローバル変数（cleanup で参照するため file scope で宣言）---
+CARGO_PID=""
+
+# --- ログヘルパー ---
+log() {
+    echo "[e2e-codex] $*" >&2
+}
+
+# --- ツール存在チェックヘルパー ---
+require_tool() {
+    local cmd="$1"
+    local msg="$2"
+    local hint="$3"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        log "ERROR: $msg"
+        log "  $hint"
+        exit 1
+    fi
+}
+
+# --- クリーンアップ処理（EXIT / INT / TERM で呼ばれる）---
+cleanup() {
+    local rc=$?
+    # cargo run プロセスを停止する（kill_on_drop により ht-mcp と codex も連鎖終了）
+    if [[ -n "$CARGO_PID" ]] && kill -0 "$CARGO_PID" 2>/dev/null; then
+        kill -TERM "$CARGO_PID" 2>/dev/null || true
+        # 最大 5 秒待つ
+        for _ in 1 2 3 4 5; do
+            kill -0 "$CARGO_PID" 2>/dev/null || break
+            sleep 1
+        done
+        # まだ生きていれば強制終了
+        kill -0 "$CARGO_PID" 2>/dev/null && kill -KILL "$CARGO_PID" 2>/dev/null || true
+    fi
+    # 失敗時はビルドログ末尾を表示する
+    if [[ $rc -ne 0 ]] && [[ -f "$LOG_FILE" ]]; then
+        log "失敗ログ (末尾 40 行):"
+        tail -n 40 "$LOG_FILE" >&2
+    fi
+    # 成功時はログファイルを削除する
+    if [[ $rc -eq 0 ]] && [[ -f "$LOG_FILE" ]]; then
+        rm -f "$LOG_FILE"
+    fi
+    return $rc
+}
+
+trap cleanup EXIT INT TERM
+
+# --- 前提ツール確認 ---
+require_tool "codex" \
+    "codex CLI が見つかりません。" \
+    "~/.local/bin/codex が PATH に含まれているか確認してください（codex login 実行済みが前提）。"
+
+require_tool "jq" \
+    "jq が見つかりません。" \
+    "sudo apt-get install jq または brew install jq で導入してください。"
+
+require_tool "curl" \
+    "curl が見つかりません。" \
+    "curl をインストールしてください。"
+
+# ht-mcp: HT_MCP_PATH が設定されていればその実行可能性を確認、なければ PATH を探す
+if [[ -n "${HT_MCP_PATH:-}" ]]; then
+    if [[ ! -x "$HT_MCP_PATH" ]]; then
+        log "ERROR: HT_MCP_PATH に指定された ht-mcp が見つかりません: $HT_MCP_PATH"
+        log "  PATH に追加するか HT_MCP_PATH を設定してください。"
+        exit 1
+    fi
+else
+    require_tool "ht-mcp" \
+        "ht-mcp が見つかりません。" \
+        "PATH に追加するか HT_MCP_PATH を設定してください。"
+fi
+
+# --- サーバ起動 ---
+cd "$WEBIF_DIR"
+log "ビルド + 起動中... (AGENT=codex, PORT=${PORT}, ログ: $LOG_FILE)"
+AGENT=codex PORT="$PORT" TURNS_DIR="./turns/codex" cargo run --release >"$LOG_FILE" 2>&1 &
+CARGO_PID=$!
+
+# --- 起動待機（最大 60 秒）---
+wait_for_server() {
+    local i
+    for i in $(seq 1 60); do
+        # cargo プロセスが死んでいればビルド失敗かポート競合
+        if ! kill -0 "$CARGO_PID" 2>/dev/null; then
+            log "ERROR: cargo run プロセスが終了しました (ビルド失敗かポート競合の可能性)"
+            exit 1
+        fi
+        # HTTP レスポンスが返れば起動完了（/turns/0 は 404 でも OK）
+        if curl -s -o /dev/null --max-time 2 "$BASE_URL/turns/0" 2>/dev/null; then
+            return 0
+        fi
+        # 5 秒ごとに進捗を表示する
+        if (( i % 5 == 0 )); then
+            log "サーバ起動待機中 (${i}s/60s)..."
+        fi
+        sleep 1
+    done
+    log "ERROR: 60 秒待ってもサーバが応答しませんでした"
+    exit 1
+}
+
+wait_for_server
+log "サーバ起動完了 (PORT=${PORT})"
+
+# --- 段階 1: 基本 E2E（AGNT-01）---
+log "=== 段階 1: 基本 E2E (AGNT-01) ==="
+log "プロンプト送信: 2+2 は何？"
+T1_START=$(date +%s)
+response1=""
+if ! response1=$(curl -s --max-time 720 -X POST "$BASE_URL/prompt" \
+    -H 'Content-Type: application/json' \
+    -d '{"prompt":"What is 2+2? Answer with the number only.","wait":true}'); then
+    log "ERROR: curl 失敗（段階 1）"
+    exit 1
+fi
+T1_END=$(date +%s)
+T1_ELAPSED=$(( T1_END - T1_START ))
+
+status1=$(echo "$response1" | jq -r '.status // "unknown"')
+result1=$(echo "$response1" | jq -r '.result // ""')
+turn_id1=$(echo "$response1" | jq -r '.turn_id // "unknown"')
+
+log "段階 1 結果: turnId=${turn_id1}, status=${status1}, 所要時間=${T1_ELAPSED}s"
+log "段階 1 result 先頭 100 文字: $(echo "$result1" | head -c 100)"
+
+if [[ "$status1" == "timeout" ]] || [[ "$status1" == "failed" ]]; then
+    log "ERROR: 段階 1 失敗 (status=${status1}) — result: $(echo "$result1" | head -c 200)"
+    exit 1
+fi
+if [[ -z "$result1" ]]; then
+    log "ERROR: 段階 1 失敗 — result が空"
+    exit 1
+fi
+log "OK: 段階 1 通過 (result 非空 + status=${status1})"
+
+# --- 段階 2: 履歴シード（ターン1）---
+log "=== 段階 2: 履歴シード ==="
+log "プロンプト送信: 秘密の数値 7331 を記憶させる"
+T2_START=$(date +%s)
+response2=""
+if ! response2=$(curl -s --max-time 720 -X POST "$BASE_URL/prompt" \
+    -H 'Content-Type: application/json' \
+    -d '{"prompt":"Remember this secret number: 7331","wait":true}'); then
+    log "ERROR: curl 失敗（段階 2）"
+    exit 1
+fi
+T2_END=$(date +%s)
+T2_ELAPSED=$(( T2_END - T2_START ))
+
+status2=$(echo "$response2" | jq -r '.status // "unknown"')
+turn_id2=$(echo "$response2" | jq -r '.turn_id // "unknown"')
+log "段階 2 結果: turnId=${turn_id2}, status=${status2}, 所要時間=${T2_ELAPSED}s"
+
+if [[ "$status2" == "timeout" ]] || [[ "$status2" == "failed" ]]; then
+    log "ERROR: 段階 2 失敗 (status=${status2})"
+    exit 1
+fi
+log "OK: 段階 2 通過 (履歴シード完了)"
+
+# --- 段階 3: fresh 履歴隔離（AGNT-02 + D-10）---
+log "=== 段階 3: fresh 履歴隔離 (AGNT-02 + D-10) ==="
+log "プロンプト送信: fresh:true で秘密の数値を質問（7331 が漏れないことを確認）"
+T3_START=$(date +%s)
+response3=""
+if ! response3=$(curl -s --max-time 720 -X POST "$BASE_URL/prompt" \
+    -H 'Content-Type: application/json' \
+    -d '{"prompt":"What secret number did I tell you?","fresh":true,"wait":true}'); then
+    log "ERROR: curl 失敗（段階 3）"
+    exit 1
+fi
+T3_END=$(date +%s)
+T3_ELAPSED=$(( T3_END - T3_START ))
+
+status3=$(echo "$response3" | jq -r '.status // "unknown"')
+result3=$(echo "$response3" | jq -r '.result // ""')
+turn_id3=$(echo "$response3" | jq -r '.turn_id // "unknown"')
+
+log "段階 3 結果: turnId=${turn_id3}, status=${status3}, 所要時間=${T3_ELAPSED}s"
+log "段階 3 result 先頭 100 文字: $(echo "$result3" | head -c 100)"
+
+if [[ "$status3" == "timeout" ]] || [[ "$status3" == "failed" ]]; then
+    log "ERROR: 段階 3 失敗 (status=${status3}) — result: $(echo "$result3" | head -c 200)"
+    exit 1
+fi
+
+# 履歴隔離チェック: fresh:true 後のレスポンスに 7331 が含まれていないこと
+if echo "$result3" | grep -q "7331"; then
+    log "ERROR: 履歴隔離失敗 — fresh:true 後も前ターンの秘密数値 7331 が漏れている"
+    log "  result3: $(echo "$result3" | head -c 300)"
+    exit 1
+fi
+log "OK: 段階 3 通過 (fresh:true 後に 7331 が含まれない — 履歴隔離成立)"
+
+# --- 最終サマリー ---
+log ""
+log "=== E2E 検証サマリー ==="
+log "段階 1 (AGNT-01): turnId=${turn_id1}, 所要時間=${T1_ELAPSED}s, status=${status1} — PASS"
+log "段階 2 (履歴シード): turnId=${turn_id2}, 所要時間=${T2_ELAPSED}s, status=${status2} — PASS"
+log "段階 3 (AGNT-02): turnId=${turn_id3}, 所要時間=${T3_ELAPSED}s, status=${status3} — PASS"
+log ""
+log "OK: Codex E2E 完了 — AGNT-01 (result/status ファイル) + AGNT-02 (fresh:true 履歴隔離) 検証済み"
+exit 0
