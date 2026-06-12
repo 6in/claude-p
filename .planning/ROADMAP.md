@@ -67,8 +67,14 @@
   4. `AGENT=opencode` で `POST /prompt {"fresh":true}` が `/new` コマンド送信方式で正常動作する
   5. `agents/codex.toml` と `agents/opencode.toml` が各エージェントの ready_pattern・fresh_mode・prerequisite 手順を正確に記述している（コメントに auth セットアップ手順を含む）
 
-**Plans**: TBD
-**Research flag**: NEEDS EMPIRICAL RESEARCH — ready_pattern 値・output_covenant 動作・trust dialog 抑制は実バイナリを ht-mcp 下で動かして確認が必要。Use `/gsd-plan-phase --research-phase 5` before executing.
+**Plans**: 2 plans
+
+**Wave 1** *(並列 — ファイル重複なし)*
+
+- [ ] 05-01-PLAN.md — Codex プロファイル + E2E スクリプト（agents/codex.toml, scripts/e2e-codex.sh; AGNT-01/02）
+- [ ] 05-02-PLAN.md — OpenCode プロファイル + setup/E2E スクリプト + ドキュメント（agents/opencode.toml, scripts/setup-opencode.sh, scripts/e2e-opencode.sh, README; AGNT-03/04）
+
+**Research flag**: RESOLVED — 05-RESEARCH.md が Codex/OpenCode を実機検証済み（Codex HIGH / OpenCode /turn workaround HIGH）。プロファイル値は確定。
 
 ### Phase 6: Multi-Instance Parallel Foundation
 
