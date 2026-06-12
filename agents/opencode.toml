@@ -1,50 +1,59 @@
 # agents/opencode.toml
 # OpenCode（v1.4.3+）エージェントプロファイル。
 #
+# アーキテクチャ（D-09: opencode run ラッパー方式）:
+#   opencode TUI を ht-mcp PTY で動かしてキーストローク注入する方法（旧方式）は、
+#   `/turn` コマンドが処理されない問題（Pitfall 9）のため廃止。
+#   代わりに scripts/opencode-runner.sh ラッパーを使用する。
+#   ラッパーは stdin からトリガー行を1行ずつ受け取り、
+#   `opencode run --command turn <path>` を呼び出す。
+#
 # 前提条件:
 #   1. opencode が PATH 上にあること（~/.opencode/bin/opencode または ~/.local/share/opencode/bin/opencode）
 #   2. GitHub Copilot 認証済み（推奨）または他プロバイダ認証済み:
 #      opencode auth login
 #      opencode providers list  （確認用）
-#   3. /turn カスタムコマンドを生成する（一度だけ実行）:
+#   3. setup-opencode.sh を一度実行して前提ファイルを生成する:
 #      bash scripts/setup-opencode.sh
 #      → ~/.config/opencode/commands/turn.md が作成される（D-04, D-06）
+#      → ~/.config/opencode/opencode.json が作成される（bash/edit/read/glob/grep/list/doom_loop 自動承認）
+#         ※ opencode.json がないと bash/edit 等に確認ダイアログが表示されタイムアウトになる
+#         ※ キーは "permission"（単数形）必須。"permissions" は無効でOpenCode が即終了する（Pitfall 8）
 #
 # ⚠ 既知の制約と対処:
 #   - ht-mcp ht_send_keys は日本語/マルチバイト文字を無音で破棄する（Pitfall 1）
-#     → trigger_template は ASCII のみ使用すること（/turn コマンド経由なので問題なし）
-#   - 自然言語テキストをそのまま入力するとファイルパス補完が発火し ht-mcp がブロックする（Pitfall 7）
-#     → /turn カスタムコマンド経由でこのブロックを回避済み
+#     → trigger_template は ASCII のみ使用すること（opencode run コマンド形式なので問題なし）
+#   - opencode TUI の /turn コマンドが ht-mcp PTY 内で処理されない（Pitfall 9 — 根本原因不明）
+#     → opencode run + opencode-runner.sh ラッパーで回避（D-09）
 #   - GLM-4.6 (OpenRouter デフォルト) は出力規約への遵守が不安定（Pitfall 2）
 #     → GitHub Copilot の Claude Haiku 4.5 は規約遵守を確認済み（2026-06-12 実機 E2E）
-#   - /new はエージェント選択ダイアログを開く（Enter 2回が必要 — Pitfall 3）
-#     → fresh_mode = "respawn" を採用（Phase 4 で実装・テスト済みのパス、Rust 変更ゼロ）
+#   - OpenCode はデフォルトで bash/edit/read 等に確認ダイアログを表示する
+#     → ~/.config/opencode/opencode.json で permission.bash="allow" 等が必須（Pitfall 8）
+#     → キーは "permission"（単数形）。"permissions"（複数形）は無効フィールドで即終了する
+#     → setup-opencode.sh が自動生成する
 #
 # 多重インスタンス運用:
 #   opencode の設定は ~/.local/share/opencode/ に保存される。
 #   OPENCODE_HOME 相当の環境変数はなく、インスタンス分離方法は未調査（Phase 6 で検討）。
 #
 # 実測タイミング（2026-06-12 実機計測）:
-#   - 起動所要時間: 4-8 秒（"Ask anything" プレースホルダ出現まで）
-#   - E2E 所要時間: ~13 秒（単純タスク、Claude Haiku 4.5 / GitHub Copilot）
-#   - startup_timeout_secs = 30: 余裕を持った設定値（初回接続は遅い場合あり）
-#   - startup_settle_ms = 7000: "Ask anything" 後の画面ブランク期間をスキップ（D-07）
+#   - opencode run 所要時間: 10-30 秒（単純タスク、Claude Haiku 4.5 / GitHub Copilot）
+#   - startup_timeout_secs = 5: opencode-runner.sh はほぼ即時起動
+#   - startup_settle_ms = 0: TUI 起動待ちが不要になったためゼロに（D-09）
 #   - turn_timeout_secs = 300: 遅いモデルも許容する上限
 
-# spawn コマンド（opencode が PATH 上にあること）
-command = ["opencode"]
+# spawn コマンド: opencode TUI ではなく opencode-runner.sh ラッパー（D-09）
+# ラッパーが stdin から "opencode run --command turn <path>" 形式のトリガーを受け取る
+command = ["bash", "scripts/opencode-runner.sh"]
 
-# 起動後の入力フィールドプレースホルダ — "Ask anything" は起動後 4-8 秒で現れる
-ready_pattern = "Ask anything"
+# 準備完了パターン: opencode-runner.sh が起動直後に出力する文字列
+ready_pattern = "OpenCodeRunner ready"
 
-# fresh リセット方式: respawn（セッション kill+再生成）を採用
-# /new はエージェント選択ダイアログが開くため Enter が 2 回必要（Pitfall 3 — Patterntern 3）。
-# ht-webif は clear_command を 1 回だけ送信するため /new はダイアログがスタックする。
-# respawn は Phase 4 で実装・テスト済みのパスで Rust 変更ゼロ（D-02 確定値 — 2026-06-12 実機試行）。
+# fresh リセット方式: respawn（セッション kill+再生成）
+# opencode run は1ターンで終了するため、respawn で毎ターン新しいコンテキストになる
 fresh_mode = "respawn"
 
-# /new コマンド — 参考として残す（fresh_mode = "respawn" のため実際には使用されない）
-# /new を使用するにはエージェント選択ダイアログで Enter を 2 回送る必要がある（未実装）
+# clear_command は respawn のため使用されないが、フィールドとして保持
 clear_command = "/new"
 
 # 出力規約テンプレート — ASCII のみ使用（マルチバイト文字の ht-mcp 破棄問題を避けるため英語）
@@ -57,22 +66,19 @@ output_covenant = """
    Content must be exactly one JSON line: {"status":"done"} (on failure: {"status":"failed","error":"reason"})
 The status file is the completion sentinel. Always write result FIRST, then status LAST."""
 
-# トリガーテンプレート — /turn カスタムコマンド経由（ASCII のみ — Pitfall 1/7 対策）
-# 前提: ~/.config/opencode/commands/turn.md が存在すること（bash scripts/setup-opencode.sh で生成）
-# /turn はコマンドモードで処理されるため、パス引数でファイルパス補完が発火しない（Pitfall 7 対策）
-trigger_template = "/turn {prompt_path}"
+# トリガーテンプレート — opencode run --command turn 形式（D-09）
+# opencode-runner.sh がこのコマンドを eval で実行する
+# turn.md の $ARGUMENTS に {prompt_path} が渡される
+trigger_template = "opencode run --command turn {prompt_path}"
 
-# セッション起動タイムアウト秒 — OpenCode は 4-8 秒で起動。30s は余裕を持たせた設定値
-startup_timeout_secs = 30
+# セッション起動タイムアウト秒 — opencode-runner.sh はほぼ即時起動
+startup_timeout_secs = 5
 
-# ready_pattern 検出後の落ち着き待機ミリ秒（D-07: startup_settle_ms）。
-# OpenCode v1.4.3 では "Ask anything" プレースホルダが現れた後、
-# GitHub Copilot 認証・モデルロード中に画面が一時的にブランクになることがある。
-# この間にトリガーを送ると入力が取りこぼされる。
-# 2026-06-12 実機 E2E 初回失敗の根本原因 → 7s 待機で修正（Rule 1 自動修正）。
-startup_settle_ms = 7000
+# ready_pattern 検出後の落ち着き待機ミリ秒（D-09: ラッパー方式では不要）
+# opencode run は起動後すぐに処理を開始するため待機不要
+startup_settle_ms = 0
 
-# 1 ターンのタイムアウト秒 — ~13 秒の単純タスクから複雑なタスクまで許容
+# 1 ターンのタイムアウト秒 — opencode run の処理時間（10-30s 単純タスク）
 turn_timeout_secs = 300
 
 # モデル選択（コメントアウト例 — GitHub Copilot 認証済みなら Claude モデルを推奨）
