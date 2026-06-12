@@ -36,6 +36,9 @@ ready_pattern = "YOLO mode"
 # 段階 3（fresh 履歴隔離）で秘密数値 7331 が漏洩したため respawn に切り替え。
 fresh_mode = "respawn"
 
+# clear_command: AgentProfile 構造体の必須フィールドのため値を保持する（respawn モードでは使用されない）
+clear_command = "/clear"
+
 # 出力規約テンプレート — Codex は日本語指示に対応済み（実機検証済み）
 output_covenant = """
 【ht-webif 出力規約】上のタスクを実行し、次のとおりファイルに書き出してください:
