@@ -18,8 +18,8 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### エージェント対応（AGNT）
 
-- [ ] **AGNT-01**: Codex CLI プロファイル（`agents/codex.toml`）で `POST /prompt` → result 取得が実機 E2E で動作する
-- [ ] **AGNT-02**: Codex CLI で `fresh:true`（`/clear` 送信）が実機 E2E 動作する（Codex も in-session `/clear` を持つ — 2026-06-11 修正。実機検証で不安定な場合は `fresh_mode = "respawn"` へフォールバック）
+- [x] **AGNT-01**: Codex CLI プロファイル（`agents/codex.toml`）で `POST /prompt` → result 取得が実機 E2E で動作する
+- [x] **AGNT-02**: Codex CLI で `fresh:true`（`/clear` 送信）が実機 E2E 動作する（Codex も in-session `/clear` を持つ — 2026-06-11 修正。実機検証で不安定な場合は `fresh_mode = "respawn"` へフォールバック）
 - [ ] **AGNT-03**: OpenCode プロファイル（`agents/opencode.toml`）で `POST /prompt` → result 取得が実機 E2E で動作する
 - [ ] **AGNT-04**: OpenCode で `fresh:true`（`/new` 送信）が実機 E2E 動作する
 
@@ -66,8 +66,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PROF-04 | Phase 4 | Complete |
 | PROF-05 | Phase 4 | Complete |
 | PROF-06 | Phase 4 | Complete |
-| AGNT-01 | Phase 5 | Pending |
-| AGNT-02 | Phase 5 | Pending |
+| AGNT-01 | Phase 5 | Complete |
+| AGNT-02 | Phase 5 | Complete |
 | AGNT-03 | Phase 5 | Pending |
 | AGNT-04 | Phase 5 | Pending |
 | PARA-01 | Phase 6 | Pending |
