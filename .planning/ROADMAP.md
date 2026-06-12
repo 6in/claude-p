@@ -64,7 +64,7 @@
   1. `AGENT=codex ./ht-webif` に `POST /prompt` を送ると、`result-<turnId>.txt` に非空の回答が書き込まれ `status-<turnId>.json` に成功ステータスが記録される
   2. `AGENT=codex` で `POST /prompt {"fresh":true}` が `/clear` 送信方式で正常動作する（Codex も in-session `/clear` を持つ — 2026-06-11 修正。実機検証で不安定な場合は respawn 方式へフォールバック）
   3. `AGENT=opencode ./ht-webif` に `POST /prompt` を送ると、同様に result ファイルと status ファイルが作成される
-  4. `AGENT=opencode` で `POST /prompt {"fresh":true}` が `/new` コマンド送信方式で正常動作する
+  4. `AGENT=opencode` で `POST /prompt {"fresh":true}` が respawn 方式（セッション kill+再生成）で正常動作する（`/new` はエージェント選択ダイアログのため不採用 — 2026-06-12 実機試行 D-01/D-02 確定）
   5. `agents/codex.toml` と `agents/opencode.toml` が各エージェントの ready_pattern・fresh_mode・prerequisite 手順を正確に記述している（コメントに auth セットアップ手順を含む）
 
 **Plans**: 2 plans

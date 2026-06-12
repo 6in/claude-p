@@ -97,6 +97,73 @@ PORT=8082 TURNS_DIR=./turns-8082 cargo run --release
 サーバ起動 → `POST /prompt` (wait:true) → 結果表示 → 後片付けまでを 1
 コマンドで実行する。失敗時はビルドログの末尾 40 行を stderr に出力する。
 
+## エージェントの追加・設定
+
+ht-webif はエージェントプロファイル（`agents/<name>.toml`）を追加するだけで任意の対話型 CLI エージェントを使用できる（TOML 追加のみ、Rust リビルド不要）。
+
+### Codex CLI（OpenAI）
+
+**前提条件:**
+
+1. `codex` CLI が PATH 上にあること（`~/.local/bin/codex`）
+2. ChatGPT Plus で認証済み: `codex login`（`~/.codex/auth.json` が作成される）
+3. プロジェクトディレクトリが信頼済み（`--dangerously-bypass-approvals-and-sandbox` フラグ採用のため不要だが推奨）
+
+**起動:**
+
+```bash
+AGENT=codex PORT=8081 cargo run --release
+```
+
+**動作確認:**
+
+```bash
+bash scripts/e2e-codex.sh
+```
+
+基本 E2E（AGNT-01）+ `fresh:true` 履歴隔離（AGNT-02）の 3 段階を自動検証する。
+`fresh_mode = "command"` + `clear_command = "/clear"` が確定値（2026-06-12 ロールアウトファイル調査で検証済み）。
+
+### OpenCode（v1.4.3+）
+
+**前提条件:**
+
+1. `opencode` CLI が PATH 上にあること（`~/.opencode/bin/opencode` または `~/.local/share/opencode/bin/opencode`）
+2. GitHub Copilot 認証済み（推奨）または他プロバイダ認証済み:
+   ```bash
+   opencode auth login
+   opencode providers list  # 確認用
+   ```
+3. `/turn` カスタムコマンドを生成する（一度だけ実行）:
+   ```bash
+   bash scripts/setup-opencode.sh
+   # → ~/.config/opencode/commands/turn.md が作成される
+   ```
+   このコマンドは冪等（既に存在すればスキップ）。`scripts/e2e-opencode.sh` 実行時は自動的に呼び出される。
+
+**既知の制約:**
+- トリガーは ASCII のみ有効（`ht-mcp` のマルチバイト無音破棄制約 — Pitfall 1）
+- GLM-4.6（OpenRouter デフォルト）は出力規約に不安定 → GitHub Copilot の Claude Haiku 4.5 推奨
+- `fresh:true` は `fresh_mode = "respawn"` 方式（プロセス kill+再生成）で動作する
+  （`/new` はエージェント選択ダイアログが開くため Enter 2 回必要 — `ht-webif` は 1 回のみ送信）
+
+**起動:**
+
+```bash
+AGENT=opencode PORT=8082 cargo run --release
+```
+
+**動作確認:**
+
+```bash
+bash scripts/e2e-opencode.sh
+```
+
+基本 E2E（AGNT-03）+ `fresh:true` 履歴隔離（AGNT-04）の 3 段階を自動検証する。
+スクリプトは `scripts/setup-opencode.sh` を自動的に呼び出して前提条件を充足する。
+
+> **注意:** Codex の多重インスタンス分離（`CODEX_HOME`）や OpenCode のインスタンス分離方法は Phase 6 で検討予定。
+
 ## claude-p — curl 不要の薄いラッパ
 
 `POST /prompt` を毎回 curl で書く代わりに、`claude-p {port} {prompt}` 一発でターン投入＋結果取得まで完結させるラッパスクリプト。指定ポートにサーバが居なければ自動でデーモン化起動し、既に居れば再利用する。
