@@ -30,11 +30,11 @@ command = ["codex", "--dangerously-bypass-approvals-and-sandbox"]
 # 起動直後のバナーに "YOLO mode" が表示される（--dangerously-bypass-approvals-and-sandbox 時）
 ready_pattern = "YOLO mode"
 
-# fresh リセット方式: "command" = clear_command 送信（Codex の /clear はダイアログなしで即座にリセット — VERIFIED）
-fresh_mode = "command"
-
-# /clear でコンテキストをリセットしてセッションを維持
-clear_command = "/clear"
+# fresh リセット方式: "respawn" = ht-mcp プロセスを再起動してセッションをまっさらに戻す。
+# 当初は "command" + clear_command = "/clear" を採用したが、2026-06-12 実機検証（Codex CLI v0.139.0）で
+# /clear は UI 上のコンテキストをリセットするが、LLM 側の会話履歴は保持されることを確認。
+# 段階 3（fresh 履歴隔離）で秘密数値 7331 が漏洩したため respawn に切り替え。
+fresh_mode = "respawn"
 
 # 出力規約テンプレート — Codex は日本語指示に対応済み（実機検証済み）
 output_covenant = """
