@@ -246,6 +246,7 @@ mod tests {
             output_covenant: "{result_path} {status_path}".to_string(),
             trigger_template: "{prompt_path}".to_string(),
             startup_timeout_secs: 2,
+            startup_settle_ms: 0,
             turn_timeout_secs: 2,
             model_flag: None,
             model_value: None,

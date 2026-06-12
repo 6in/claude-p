@@ -25,6 +25,11 @@ pub struct AgentProfile {
     /// セッション起動タイムアウト秒（デフォルト 25）
     #[serde(default = "default_startup_timeout")]
     pub startup_timeout_secs: u64,
+    /// ready_pattern 検出後の落ち着き待機ミリ秒（デフォルト 0）。
+    /// OpenCode のように ready_pattern が現れてもネットワーク認証中に
+    /// 画面が一時的にブランクになるエージェントで入力取りこぼしを防ぐ。
+    #[serde(default)]
+    pub startup_settle_ms: u64,
     /// 1 ターンのタイムアウト秒（デフォルト 300）
     #[serde(default = "default_turn_timeout")]
     pub turn_timeout_secs: u64,

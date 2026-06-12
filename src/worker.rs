@@ -43,6 +43,9 @@ impl Worker<McpClient> {
 
     /// claude TUI セッションを作り、ready になるまで待ってセッション ID を返す。
     /// `McpClient` 具象に紐づく（本番起動経路）。
+    /// startup_settle_ms > 0 の場合は ready_pattern 検出後にさらに待機する。
+    /// これにより OpenCode のように ready_pattern 検出後にネットワーク認証で
+    /// 一時的にブランクになるエージェントでの入力取りこぼしを防ぐ。
     pub(crate) async fn spawn_session(
         client: &mut McpClient,
         profile: &AgentProfile,
@@ -52,6 +55,13 @@ impl Worker<McpClient> {
         loop {
             let snap = client.snapshot(&session_id).await?;
             if snap.contains(&profile.ready_pattern) {
+                if profile.startup_settle_ms > 0 {
+                    eprintln!(
+                        "[worker] ready_pattern 検出 → 落ち着き待機 {}ms",
+                        profile.startup_settle_ms
+                    );
+                    tokio::time::sleep(Duration::from_millis(profile.startup_settle_ms)).await;
+                }
                 return Ok(session_id);
             }
             if Instant::now() > deadline {
@@ -117,12 +127,19 @@ impl<M: Mcp + Send> Worker<M> {
         let old = self.session_id.clone();
         let cmd = self.profile.spawn_command();
         let new_id = self.client.create_session(&cmd).await?;
-        // ready 待ち（spawn_session と同じロジック）。
+        // ready 待ち + 落ち着き待機（spawn_session と同じロジック）。
         let deadline = Instant::now() + Duration::from_secs(self.profile.startup_timeout_secs);
         let ready_pattern = self.profile.ready_pattern.clone();
+        let settle_ms = self.profile.startup_settle_ms;
         loop {
             let snap = self.client.snapshot(&new_id).await?;
             if snap.contains(&ready_pattern) {
+                if settle_ms > 0 {
+                    eprintln!(
+                        "[worker] ready_pattern 検出 → 落ち着き待機 {settle_ms}ms"
+                    );
+                    tokio::time::sleep(Duration::from_millis(settle_ms)).await;
+                }
                 break;
             }
             if Instant::now() > deadline {
@@ -156,12 +173,19 @@ impl<M: Mcp + Restartable + Send> Worker<M> {
         self.client.respawn(&self.ht_mcp_path).await?;
         let cmd = self.profile.spawn_command();
         let new_id = self.client.create_session(&cmd).await?;
-        // ready 待ち（spawn_session と同じロジック）。
+        // ready 待ち + 落ち着き待機（spawn_session と同じロジック）。
         let deadline = Instant::now() + Duration::from_secs(self.profile.startup_timeout_secs);
         let ready_pattern = self.profile.ready_pattern.clone();
+        let settle_ms = self.profile.startup_settle_ms;
         loop {
             let snap = self.client.snapshot(&new_id).await?;
             if snap.contains(&ready_pattern) {
+                if settle_ms > 0 {
+                    eprintln!(
+                        "[worker] ready_pattern 検出 → 落ち着き待機 {settle_ms}ms"
+                    );
+                    tokio::time::sleep(Duration::from_millis(settle_ms)).await;
+                }
                 break;
             }
             if Instant::now() > deadline {

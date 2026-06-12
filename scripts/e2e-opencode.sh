@@ -123,7 +123,7 @@ bash "$SCRIPT_DIR/setup-opencode.sh"
 # --- サーバ起動 ---
 cd "$WEBIF_DIR"
 log "ビルド + 起動中... (AGENT=opencode, PORT=${PORT}, ログ: $LOG_FILE)"
-AGENT=opencode PORT="$PORT" TURNS_DIR="./turns/opencode" cargo run --release >"$LOG_FILE" 2>&1 &
+AGENT=opencode PORT="$PORT" TURNS_DIR="./turns" cargo run --release >"$LOG_FILE" 2>&1 &
 CARGO_PID=$!
 
 # --- 起動待機（最大 60 秒）---

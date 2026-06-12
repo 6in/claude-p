@@ -112,7 +112,7 @@ fi
 # --- サーバ起動 ---
 cd "$WEBIF_DIR"
 log "ビルド + 起動中... (AGENT=codex, PORT=${PORT}, ログ: $LOG_FILE)"
-AGENT=codex PORT="$PORT" TURNS_DIR="./turns/codex" cargo run --release >"$LOG_FILE" 2>&1 &
+AGENT=codex PORT="$PORT" TURNS_DIR="./turns" cargo run --release >"$LOG_FILE" 2>&1 &
 CARGO_PID=$!
 
 # --- 起動待機（最大 60 秒）---

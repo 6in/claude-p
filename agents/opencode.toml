@@ -27,7 +27,8 @@
 # 実測タイミング（2026-06-12 実機計測）:
 #   - 起動所要時間: 4-8 秒（"Ask anything" プレースホルダ出現まで）
 #   - E2E 所要時間: ~13 秒（単純タスク、Claude Haiku 4.5 / GitHub Copilot）
-#   - startup_timeout_secs = 15: 余裕を持った設定値
+#   - startup_timeout_secs = 30: 余裕を持った設定値（初回接続は遅い場合あり）
+#   - startup_settle_ms = 7000: "Ask anything" 後の画面ブランク期間をスキップ（D-07）
 #   - turn_timeout_secs = 300: 遅いモデルも許容する上限
 
 # spawn コマンド（opencode が PATH 上にあること）
@@ -61,8 +62,15 @@ The status file is the completion sentinel. Always write result FIRST, then stat
 # /turn はコマンドモードで処理されるため、パス引数でファイルパス補完が発火しない（Pitfall 7 対策）
 trigger_template = "/turn {prompt_path}"
 
-# セッション起動タイムアウト秒 — OpenCode は 4-8 秒で起動。15s は余裕を持たせた設定値
-startup_timeout_secs = 15
+# セッション起動タイムアウト秒 — OpenCode は 4-8 秒で起動。30s は余裕を持たせた設定値
+startup_timeout_secs = 30
+
+# ready_pattern 検出後の落ち着き待機ミリ秒（D-07: startup_settle_ms）。
+# OpenCode v1.4.3 では "Ask anything" プレースホルダが現れた後、
+# GitHub Copilot 認証・モデルロード中に画面が一時的にブランクになることがある。
+# この間にトリガーを送ると入力が取りこぼされる。
+# 2026-06-12 実機 E2E 初回失敗の根本原因 → 7s 待機で修正（Rule 1 自動修正）。
+startup_settle_ms = 7000
 
 # 1 ターンのタイムアウト秒 — ~13 秒の単純タスクから複雑なタスクまで許容
 turn_timeout_secs = 300
