@@ -23,7 +23,7 @@
 **Milestone Goal:** ht-webif を Claude 専用から脱却させ、エージェントプロファイル（`agents/*.toml`）で任意の対話型 CLI エージェントを駆動できるようにし、多重インスタンスによる並列オーケストレーションの土台を作る。
 
 - [x] **Phase 4: Agent Profile Abstraction** - Claude を最初のプロファイルとして再定義する純粋リファクタ（挙動変化なし） (completed 2026-06-11)
-- [x] **Phase 5: Codex CLI and OpenCode Validation** - Codex / OpenCode の実機 E2E 検証とプロファイル確立 (completed 2026-06-12)
+- [ ] **Phase 5: Codex CLI and OpenCode Validation** - Codex / OpenCode の実機 E2E 検証とプロファイル確立
 - [ ] **Phase 6: Multi-Instance Parallel Foundation** - 観測性エンドポイントと多重インスタンス並列起動の土台
 
 ## Phase Details
