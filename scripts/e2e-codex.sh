@@ -6,6 +6,15 @@
 #   2. 履歴シード (ターン1): 固有の数値を記憶させる
 #   3. fresh 履歴隔離 (AGNT-02 + D-10): fresh:true で前ターンの情報が漏れないことを確認
 #
+# 段階 3 の方法論的注意（2026-06-12 ロールアウト調査により確立）:
+#   Codex は対話型エージェント CLI であり、ワークスペース検索（rg / ctx_search 等）を
+#   自律的に実行する能力を持つ。段階 2 の秘密数値 7331 は turns/ 配下のプロンプトファイル
+#   に平文で保存されるため、「以前伝えた秘密の数値は何ですか？」という単純な質問を送ると
+#   Codex がファイル検索で 7331 を発見し、会話履歴の漏洩と誤判定されてしまう。
+#   このファイル検索による FALSE POSITIVE を防ぐため、段階 3 のプロンプトには
+#   「ファイル読み取り・検索・シェルコマンド実行を一切せず、会話の記憶だけで答えよ」
+#   という明示的な制約を付与する。この制約がなければテスト自体が無効となる。
+#
 # 前提条件:
 #   - codex が PATH 上にあること（~/.local/bin/codex）
 #   - codex login 実行済み（~/.codex/auth.json 存在 + ChatGPT Plus 認証）
@@ -189,12 +198,26 @@ log "OK: 段階 2 通過 (履歴シード完了)"
 
 # --- 段階 3: fresh 履歴隔離（AGNT-02 + D-10）---
 log "=== 段階 3: fresh 履歴隔離 (AGNT-02 + D-10) ==="
-log "プロンプト送信: fresh:true で秘密の数値を質問（7331 が漏れないことを確認）"
+log "プロンプト送信: fresh:true + ファイル検索禁止で秘密の数値を質問（7331 が漏れないことを確認）"
+#
+# ファイル検索禁止プロンプトが必要な理由（2026-06-12 ロールアウト調査）:
+#   Codex v0.139.0 は /clear 後および respawn 後ともに会話履歴を完全にリセットする
+#   ことが ~/.codex/sessions/ のロールアウトファイル直接検査で確認された。
+#   しかし Codex はエージェントとしてワークスペース検索（rg / ctx_search 等）を
+#   自律実行できるため、「以前伝えた秘密の数値は何ですか？」という単純な質問に対して
+#   turns/ 配下のプロンプトファイルを検索して 7331 を発見してしまう。
+#   これは会話履歴の漏洩ではなくファイルシステムアクセスによる FALSE POSITIVE である。
+#   ファイル読み取り・検索を明示的に禁止することでテストの正しい意味論を保証する。
+#
+STAGE3_PROMPT='ファイルの読み取り・検索・シェルコマンド実行を一切せず、この会話のこれまでの記憶だけで答えてください。私が以前伝えた秘密の数値は何ですか？知らない場合は UNKNOWN とだけ書いてください。'
+
 T3_START=$(date +%s)
+# jq で JSON を構築することで日本語プロンプトの適切なエスケープを保証する
+STAGE3_JSON=$(echo '{}' | jq --arg p "$STAGE3_PROMPT" '{prompt: $p, fresh: true, wait: true}')
 response3=""
 if ! response3=$(curl -s --max-time 720 -X POST "$BASE_URL/prompt" \
     -H 'Content-Type: application/json' \
-    -d '{"prompt":"What secret number did I tell you?","fresh":true,"wait":true}'); then
+    -d "$STAGE3_JSON"); then
     log "ERROR: curl 失敗（段階 3）"
     exit 1
 fi
@@ -213,13 +236,21 @@ if [[ "$status3" == "timeout" ]] || [[ "$status3" == "failed" ]]; then
     exit 1
 fi
 
-# 履歴隔離チェック: fresh:true 後のレスポンスに 7331 が含まれていないこと
+# 履歴隔離チェック: fresh:true + ファイル検索禁止後のレスポンスに 7331 が含まれていないこと
+# （ファイル検索禁止により会話記憶のみでの応答が保証される — 上記 FALSE POSITIVE 対策参照）
 if echo "$result3" | grep -q "7331"; then
-    log "ERROR: 履歴隔離失敗 — fresh:true 後も前ターンの秘密数値 7331 が漏れている"
+    log "ERROR: 履歴隔離失敗 — fresh:true かつファイル検索禁止でも前ターンの秘密数値 7331 が漏れている"
+    log "  これは真の会話履歴漏洩を示す（ファイル検索ではない）"
     log "  result3: $(echo "$result3" | head -c 300)"
     exit 1
 fi
-log "OK: 段階 3 通過 (fresh:true 後に 7331 が含まれない — 履歴隔離成立)"
+
+# 追加確認: UNKNOWN を含む場合は隔離成功の強い証拠
+if echo "$result3" | grep -qi "UNKNOWN"; then
+    log "INFO: 段階 3 — result に UNKNOWN を含む（会話記憶なし = 隔離成立の強い証拠）"
+fi
+
+log "OK: 段階 3 通過 (fresh:true + ファイル検索禁止で 7331 が含まれない — 履歴隔離成立)"
 
 # --- 最終サマリー ---
 log ""

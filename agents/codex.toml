@@ -30,13 +30,19 @@ command = ["codex", "--dangerously-bypass-approvals-and-sandbox"]
 # 起動直後のバナーに "YOLO mode" が表示される（--dangerously-bypass-approvals-and-sandbox 時）
 ready_pattern = "YOLO mode"
 
-# fresh リセット方式: "respawn" = ht-mcp プロセスを再起動してセッションをまっさらに戻す。
-# 当初は "command" + clear_command = "/clear" を採用したが、2026-06-12 実機検証（Codex CLI v0.139.0）で
-# /clear は UI 上のコンテキストをリセットするが、LLM 側の会話履歴は保持されることを確認。
-# 段階 3（fresh 履歴隔離）で秘密数値 7331 が漏洩したため respawn に切り替え。
-fresh_mode = "respawn"
+# fresh リセット方式: "command" + clear_command = "/clear" を使用する（実証済みの設定）。
+# 検証経緯（2026-06-12 ロールアウトファイル調査 — Codex CLI v0.139.0）:
+#   /clear 実行後、新セッションは完全に新規の会話として開始されることを確認済み。
+#   Codex のロールアウトファイル（~/.codex/sessions/2026/06/12/rollout-*.jsonl）を直接検査し、
+#   段階 3 の両実行とも「会話内には数字が見えていない」と Codex 自身が述べていた。
+#   7331 の"漏洩"は会話履歴の再ロードではなく、E2E テストの方法論的欠陥だった:
+#   Codex はワークスペース検索を実行し、turns/ 配下の前ターンのプロンプトファイルを発見した。
+#   respawn モードでも同様に隔離が成立することを確認（respawn = 完全プロセス再起動）。
+#   本番設定は "command" + "/clear" が正しい選択（起動オーバーヘッドが小さい）。
+fresh_mode = "command"
 
-# clear_command: AgentProfile 構造体の必須フィールドのため値を保持する（respawn モードでは使用されない）
+# /clear コマンド — Codex のコンテキストをリセットする（ダイアログ不要、直接実行）
+# respawn も隔離成立を確認済みだが、command モードの方が起動オーバーヘッドが小さい
 clear_command = "/clear"
 
 # 出力規約テンプレート — Codex は日本語指示に対応済み（実機検証済み）
