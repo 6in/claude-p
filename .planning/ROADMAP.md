@@ -67,12 +67,16 @@
   4. `AGENT=opencode` で `POST /prompt {"fresh":true}` が respawn 方式（セッション kill+再生成）で正常動作する（`/new` はエージェント選択ダイアログのため不採用 — 2026-06-12 実機試行 D-01/D-02 確定）
   5. `agents/codex.toml` と `agents/opencode.toml` が各エージェントの ready_pattern・fresh_mode・prerequisite 手順を正確に記述している（コメントに auth セットアップ手順を含む）
 
-**Plans**: 2 plans
+**Plans**: 3 plans（05-03 はギャップクローズ — AGNT-04 検証の falsifiability 修正）
 
 **Wave 1** *(並列 — ファイル重複なし)*
 
 - [x] 05-01-PLAN.md — Codex プロファイル + E2E スクリプト（agents/codex.toml, scripts/e2e-codex.sh; AGNT-01/02）
 - [x] 05-02-PLAN.md — OpenCode プロファイル + setup/E2E スクリプト + ドキュメント（agents/opencode.toml, scripts/setup-opencode.sh, scripts/e2e-opencode.sh, README; AGNT-03/04）
+
+**Wave 1（ギャップクローズ — 05-02 完了後）**
+
+- [ ] 05-03-PLAN.md — AGNT-04 検証 falsifiability 修正: 段階 2.5 正の対照 + 段階 3 respawn 発火ログ検証 + done allowlist（scripts/e2e-opencode.sh; AGNT-04）
 
 **Research flag**: RESOLVED — 05-RESEARCH.md が Codex/OpenCode を実機検証済み（Codex HIGH / OpenCode /turn workaround HIGH）。プロファイル値は確定。
 
