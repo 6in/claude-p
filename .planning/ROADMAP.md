@@ -71,7 +71,7 @@
 
 **Wave 1** *(並列 — ファイル重複なし)*
 
-- [ ] 05-01-PLAN.md — Codex プロファイル + E2E スクリプト（agents/codex.toml, scripts/e2e-codex.sh; AGNT-01/02）
+- [x] 05-01-PLAN.md — Codex プロファイル + E2E スクリプト（agents/codex.toml, scripts/e2e-codex.sh; AGNT-01/02）
 - [ ] 05-02-PLAN.md — OpenCode プロファイル + setup/E2E スクリプト + ドキュメント（agents/opencode.toml, scripts/setup-opencode.sh, scripts/e2e-opencode.sh, README; AGNT-03/04）
 
 **Research flag**: RESOLVED — 05-RESEARCH.md が Codex/OpenCode を実機検証済み（Codex HIGH / OpenCode /turn workaround HIGH）。プロファイル値は確定。
