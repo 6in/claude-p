@@ -1,0 +1,59 @@
+# agents/codex.toml
+# Codex CLI（OpenAI）エージェントプロファイル。
+#
+# 前提条件:
+#   - codex が PATH 上にあること（~/.local/bin/codex）
+#   - ChatGPT Plus 認証済み: codex login 実行済み（~/.codex/auth.json 存在）
+#   - プロジェクトディレクトリが ~/.codex/config.toml で trust_level = "trusted" に設定済み
+#     もしくは --dangerously-bypass-approvals-and-sandbox フラグで全承認をスキップ
+#     （このプロファイルはフラグ方式を採用 — 両方設定されていれば確実）
+#
+# 多重インスタンス運用:
+#   CODEX_HOME を別ディレクトリに変えることで独立した認証・設定を持つインスタンスを起動できる。
+#   例: CODEX_HOME=/tmp/codex-inst2 AGENT=codex ./ht-webif
+#   複数インスタンスの分離検証は Phase 6（PARA-04）で実施予定。
+#
+# TURNS_DIR の注意:
+#   Codex は lean-ctx MCP hooks によりプロジェクトルート外のファイル読み取りを拒否する。
+#   TURNS_DIR を /tmp などプロジェクト外に設定すると "path escapes project root" エラーになる。
+#   デフォルトの ./turns/codex/（D-16 規定）を使用すること。
+#
+# 実測タイミング（2026-06-11 実機計測）:
+#   - 起動所要時間: ~3 秒（YOLO mode バナー出現まで）
+#   - E2E 所要時間: 18〜27 秒（単純タスク）
+#   - startup_timeout_secs = 15: 余裕を持った設定値
+#   - turn_timeout_secs = 300: 複雑なタスクも許容する上限
+
+# spawn コマンド — --dangerously-bypass-approvals-and-sandbox で全承認ダイアログをスキップ
+command = ["codex", "--dangerously-bypass-approvals-and-sandbox"]
+
+# 起動直後のバナーに "YOLO mode" が表示される（--dangerously-bypass-approvals-and-sandbox 時）
+ready_pattern = "YOLO mode"
+
+# fresh リセット方式: "command" = clear_command 送信（Codex の /clear はダイアログなしで即座にリセット — VERIFIED）
+fresh_mode = "command"
+
+# /clear でコンテキストをリセットしてセッションを維持
+clear_command = "/clear"
+
+# 出力規約テンプレート — Codex は日本語指示に対応済み（実機検証済み）
+output_covenant = """
+【ht-webif 出力規約】上のタスクを実行し、次のとおりファイルに書き出してください:
+1. 回答本文を次のファイルに書く: {result_path}
+2. 完了したら最後に次のファイルを作る: {status_path}
+   中身は JSON 1行: {"status":"done"}（失敗時は {"status":"failed","error":"理由"}）
+status ファイルが完了検知シグナルです。必ず result を書き終えてから最後に status を書いてください。"""
+
+# トリガーメッセージテンプレート — {prompt_path} プレースホルダが必須
+# Codex は日本語パスも処理可能（実機検証済み）
+trigger_template = "{prompt_path} を読んで、その指示に従ってください。"
+
+# セッション起動タイムアウト秒 — Codex は ~3 秒で起動。15s は余裕を持たせた設定値
+startup_timeout_secs = 15
+
+# 1 ターンのタイムアウト秒 — 単純タスクは 18-27 秒。複雑なタスクは 300s まで許容
+turn_timeout_secs = 300
+
+# モデル選択（コメントアウト例 — 省略時は ~/.codex/config.toml の model = "gpt-5.5" が使われる）
+# model_flag = "--model"
+# model_value = "gpt-4o"
