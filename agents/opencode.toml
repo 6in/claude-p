@@ -1,0 +1,72 @@
+# agents/opencode.toml
+# OpenCode（v1.4.3+）エージェントプロファイル。
+#
+# 前提条件:
+#   1. opencode が PATH 上にあること（~/.opencode/bin/opencode または ~/.local/share/opencode/bin/opencode）
+#   2. GitHub Copilot 認証済み（推奨）または他プロバイダ認証済み:
+#      opencode auth login
+#      opencode providers list  （確認用）
+#   3. /turn カスタムコマンドを生成する（一度だけ実行）:
+#      bash scripts/setup-opencode.sh
+#      → ~/.config/opencode/commands/turn.md が作成される（D-04, D-06）
+#
+# ⚠ 既知の制約と対処:
+#   - ht-mcp ht_send_keys は日本語/マルチバイト文字を無音で破棄する（Pitfall 1）
+#     → trigger_template は ASCII のみ使用すること（/turn コマンド経由なので問題なし）
+#   - 自然言語テキストをそのまま入力するとファイルパス補完が発火し ht-mcp がブロックする（Pitfall 7）
+#     → /turn カスタムコマンド経由でこのブロックを回避済み
+#   - GLM-4.6 (OpenRouter デフォルト) は出力規約への遵守が不安定（Pitfall 2）
+#     → GitHub Copilot の Claude Haiku 4.5 は規約遵守を確認済み（2026-06-12 実機 E2E）
+#   - /new はエージェント選択ダイアログを開く（Enter 2回が必要 — Pitfall 3）
+#     → fresh_mode = "respawn" を採用（Phase 4 で実装・テスト済みのパス、Rust 変更ゼロ）
+#
+# 多重インスタンス運用:
+#   opencode の設定は ~/.local/share/opencode/ に保存される。
+#   OPENCODE_HOME 相当の環境変数はなく、インスタンス分離方法は未調査（Phase 6 で検討）。
+#
+# 実測タイミング（2026-06-12 実機計測）:
+#   - 起動所要時間: 4-8 秒（"Ask anything" プレースホルダ出現まで）
+#   - E2E 所要時間: ~13 秒（単純タスク、Claude Haiku 4.5 / GitHub Copilot）
+#   - startup_timeout_secs = 15: 余裕を持った設定値
+#   - turn_timeout_secs = 300: 遅いモデルも許容する上限
+
+# spawn コマンド（opencode が PATH 上にあること）
+command = ["opencode"]
+
+# 起動後の入力フィールドプレースホルダ — "Ask anything" は起動後 4-8 秒で現れる
+ready_pattern = "Ask anything"
+
+# fresh リセット方式: respawn（セッション kill+再生成）を採用
+# /new はエージェント選択ダイアログが開くため Enter が 2 回必要（Pitfall 3 — Patterntern 3）。
+# ht-webif は clear_command を 1 回だけ送信するため /new はダイアログがスタックする。
+# respawn は Phase 4 で実装・テスト済みのパスで Rust 変更ゼロ（D-02 確定値 — 2026-06-12 実機試行）。
+fresh_mode = "respawn"
+
+# /new コマンド — 参考として残す（fresh_mode = "respawn" のため実際には使用されない）
+# /new を使用するにはエージェント選択ダイアログで Enter を 2 回送る必要がある（未実装）
+clear_command = "/new"
+
+# 出力規約テンプレート — ASCII のみ使用（マルチバイト文字の ht-mcp 破棄問題を避けるため英語）
+# {result_path} / {status_path} は ASCII パスになるため問題なし
+# Claude Haiku 4.5 (GitHub Copilot) で規約遵守を確認済み（2026-06-12 実機 E2E）
+output_covenant = """
+[ht-webif output rule] Complete the task above and write to files as follows:
+1. Write the answer/result to this file: {result_path}
+2. After writing result, create this file: {status_path}
+   Content must be exactly one JSON line: {"status":"done"} (on failure: {"status":"failed","error":"reason"})
+The status file is the completion sentinel. Always write result FIRST, then status LAST."""
+
+# トリガーテンプレート — /turn カスタムコマンド経由（ASCII のみ — Pitfall 1/7 対策）
+# 前提: ~/.config/opencode/commands/turn.md が存在すること（bash scripts/setup-opencode.sh で生成）
+# /turn はコマンドモードで処理されるため、パス引数でファイルパス補完が発火しない（Pitfall 7 対策）
+trigger_template = "/turn {prompt_path}"
+
+# セッション起動タイムアウト秒 — OpenCode は 4-8 秒で起動。15s は余裕を持たせた設定値
+startup_timeout_secs = 15
+
+# 1 ターンのタイムアウト秒 — ~13 秒の単純タスクから複雑なタスクまで許容
+turn_timeout_secs = 300
+
+# モデル選択（コメントアウト例 — GitHub Copilot 認証済みなら Claude モデルを推奨）
+# model_flag = "--model"
+# model_value = "anthropic/claude-3.5-sonnet"
