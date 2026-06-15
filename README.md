@@ -69,21 +69,101 @@ cargo build --release
 
 ### 複数インスタンス運用
 
-同一ホストで複数の WebIF を走らせる場合は `PORT` と `AGENT` を分けて起動する（ターン成果物は常に `<TURNS_DIR>/<agent-name>/` に書き出されるため、`AGENT` を変えるだけで自動的にサブディレクトリが分離される）:
+`instances.conf` + `just up-all` / `just down-all` / `just agents-status` で複数の WebIF インスタンスを一括管理できる。
+
+#### instances.conf — 設定ファイル書式
+
+プロジェクトルートの `instances.conf` がインスタンス定義ファイル。書式は `<agent> <port> [KEY=VALUE ...]` で、`#` で始まるコメント行と空行は無視される:
+
+```
+# instances.conf — 多重インスタンス設定。
+# 書式: <agent>  <port>  [KEY=VALUE ...]
+# コメント行（# で始まる行）と空行は無視される。
+# KEY=VALUE 列は spawn 時に環境変数として export される（eval なし）。
+
+# Claude: ~/.claude/ の OAuth は read-only 共有のため分離不要
+claude     8080
+
+# Codex: ~/.codex/ に mutable な session/auth 状態を書くため CODEX_HOME 分離必須
+codex      8081  CODEX_HOME=/home/youruser/.codex-instance1
+
+# OpenCode: ~/.config/opencode/ — 共有可（§クレデンシャル分離ガイド を参照）
+opencode   8082
+```
+
+`KEY=VALUE` の追加列はスペース区切りで複数指定できる（例: `codex 8081 CODEX_HOME=... FOO=bar`）。
+
+#### just コマンドで一括管理
+
+`webif/` で以下を実行する（内部で `scripts/launch-agents.sh` を呼び出す）:
 
 ```bash
+# 全インスタンスを起動 — /info の agent 名一致まで readiness を確認
+just up-all
+
+# 各インスタンスの状態を確認（/info を叩いて agent/status/uptime/turns を表示）
+just agents-status
+
+# 全インスタンスを停止（SIGTERM → 5 秒待機 → SIGKILL）
+just down-all
+```
+
+`up-all` はインスタンスごとに `GET /info` をポーリングし、`agent` フィールドが期待値と一致したら次のインスタンスに進む（最大 60 秒）。起動に失敗した場合はログの末尾 20 行を stderr に出力して終了する。
+
+per-instance 管理ファイル（claude-p 規約準拠）:
+- PID: `/tmp/ht-webif-<port>.pid`
+- ログ: `/tmp/ht-webif-<port>.log`
+- ターン成果物: `<webif>/turns-<port>/`
+
+#### ターンディレクトリのコリジョン回避
+
+ターン成果物は常に `<TURNS_DIR>/<agent-name>/` に書き出される（D-16）。`AGENT` が異なれば自動的にサブディレクトリが分離されるため、通常は `TURNS_DIR` を変える必要はない。
+
+同一エージェントを複数ポートで起動する場合は `TURNS_DIR` をポート別に分ける。`launch-agents.sh` はこれを自動的に行う（`TURNS_DIR=<webif>/turns-<port>` として spawn）。
+
+#### クレデンシャル分離ガイド
+
+エージェントごとにクレデンシャルの書き込み先が異なるため、多重インスタンス時の扱いが変わる:
+
+| エージェント | 認証情報の保存先 | 分離要否 | 理由 |
+|------------|----------------|---------|------|
+| **claude** | `~/.claude/.credentials.json`（OAuth トークン） | **不要** | トークンは read-only で共有される。セッション状態は `ht-mcp` が管理し `~/.claude/` には書き戻さない |
+| **codex** | `~/.codex/`（`auth.json` + セッション状態） | **必須** | `~/.codex/` には mutable な session/auth 状態が含まれるため、同時書き込みで競合が発生する |
+| **opencode** | `~/.config/opencode/`（プロバイダ認証） | **不要** | 認証情報（GitHub Copilot OAuth 等）は read-only で参照される。Phase 5 実機検証（2026-06-12）で複数インスタンスでの同時使用に問題なし |
+
+**Codex の CODEX_HOME 分離手順（必須）:**
+
+Codex の場合は `instances.conf` の `KEY=VALUE` 列に `CODEX_HOME` を指定して、インスタンスごとに独立した設定ディレクトリを持たせる:
+
+```
+# instances.conf の Codex エントリ例（ユーザ名は実際のものに変更すること）
+codex  8081  CODEX_HOME=/home/youruser/.codex-instance1
+codex  8082  CODEX_HOME=/home/youruser/.codex-instance2
+```
+
+`CODEX_HOME` ディレクトリは事前に作成しておく必要はない（Codex が初回起動時に作成する）。認証情報は `codex login` を各 `CODEX_HOME` で実行してセットアップする:
+
+```bash
+CODEX_HOME=/home/youruser/.codex-instance1 codex login
+```
+
+> **注意:** `CODEX_HOME` に実際のトークンや秘密値を直接記述しないこと。`instances.conf` に記載する値はディレクトリパスのみ（プレースホルダ `/home/youruser/...` を実際のパスに置き換える）。
+
+#### 直接起動（launcher 不使用）
+
+`launch-agents.sh` を使わず手動で起動する場合:
+
+```bash
+# 異なるエージェントを別ポートで起動（TURNS_DIR は agent-name で自動分離）
 PORT=8081 AGENT=claude cargo run --release
-PORT=8082 AGENT=codex  cargo run --release
+PORT=8082 AGENT=codex  CODEX_HOME=/home/youruser/.codex-instance1 cargo run --release
+
+# 同一エージェントを複数ポートで起動（TURNS_DIR を明示的に分ける）
+PORT=8081 TURNS_DIR=./turns-8081 AGENT=claude cargo run --release
+PORT=8082 TURNS_DIR=./turns-8082 AGENT=claude cargo run --release
 ```
 
-同一エージェントを異なるポートで動かす場合は `TURNS_DIR` も変えること:
-
-```bash
-PORT=8081 TURNS_DIR=./turns-8081 cargo run --release
-PORT=8082 TURNS_DIR=./turns-8082 cargo run --release
-```
-
-既定値はそれぞれ `PORT=8080`、`TURNS_DIR=./turns`、`AGENT=claude`。`.env` でも設定可能（`.env.example` を参照）。
+既定値: `PORT=8080`、`TURNS_DIR=./turns`、`AGENT=claude`。`.env` でも設定可能（`.env.example` を参照）。
 
 ## 動作確認
 
@@ -162,7 +242,8 @@ bash scripts/e2e-opencode.sh
 基本 E2E（AGNT-03）+ `fresh:true` 履歴隔離（AGNT-04）の 3 段階を自動検証する。
 スクリプトは `scripts/setup-opencode.sh` を自動的に呼び出して前提条件を充足する。
 
-> **注意:** Codex の多重インスタンス分離（`CODEX_HOME`）や OpenCode のインスタンス分離方法は Phase 6 で検討予定。
+> **Codex 多重インスタンス:** `CODEX_HOME` 分離が必須。手順は §複数インスタンス運用 → クレデンシャル分離ガイドを参照。
+> **OpenCode 多重インスタンス:** `~/.config/opencode/` は read-only 参照のため分離不要（Phase 6 実機検証済み）。
 
 ## claude-p — curl 不要の薄いラッパ
 
