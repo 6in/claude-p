@@ -102,7 +102,7 @@
 | 2. Module Refactor | v1.0 | 4/4 | Complete | 2026-05-25 |
 | 3. Testing & CI Automation | v1.0 | 6/6 | Complete | 2026-05-25 |
 | 4. Agent Profile Abstraction | v2.0 | 4/4 | Complete    | 2026-06-11 |
-| 5. Codex CLI and OpenCode Validation | v2.0 | 3/3 | Complete   | 2026-06-15 |
+| 5. Codex CLI and OpenCode Validation | v2.0 | 3/3 | Complete    | 2026-06-15 |
 | 6. Multi-Instance Parallel Foundation | v2.0 | 0/? | Not started | - |
 
 ---

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: マルチエージェント対応
 status: executing
-stopped_at: Completed 05-02-PLAN.md (OpenCode E2E PASS - all 3 stages)
-last_updated: "2026-06-15T00:29:12.072Z"
+stopped_at: Phase 05 complete (UAT 3/3 PASS, security verified) — ready to plan Phase 06
+last_updated: "2026-06-15T02:56:17.706Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 7
   completed_plans: 7
-  percent: 100
+  percent: 67
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** `-p` を避けつつ curl で Claude を実行できる（サブスクリプション課金を維持）— v2.0 でこの仕組みを Claude 以外の対話型 CLI エージェントへ一般化する
-**Current focus:** Phase 05 — codex-cli-and-opencode-validation
+**Current focus:** Phase 06 — multi-instance-parallel-foundation
 
 ## Current Position
 
-Phase: 05 (codex-cli-and-opencode-validation) — EXECUTING
-Plan: 2 of 3
-Status: Ready to execute
+Phase: 6
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-15
 
-Progress: [██████████] 100%
+Progress: [█████████████░░░░░░░] 2/3 phases (67%)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 4 (v2.0); 13 (v1.0 cumulative)
+- Total plans completed: 7 (v2.0); 13 (v1.0 cumulative)
 - Average duration: —
 - Total execution time: 0.0 hours
 
@@ -48,6 +48,7 @@ Progress: [██████████] 100%
 | 5. Codex CLI and OpenCode Validation | TBD | — | — |
 | 6. Multi-Instance Parallel Foundation | TBD | — | — |
 | 04 | 4 | - | - |
+| 5 | 3 | - | - |
 
 **Recent Trend:**
 

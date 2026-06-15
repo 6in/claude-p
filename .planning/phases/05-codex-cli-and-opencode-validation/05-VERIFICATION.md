@@ -1,7 +1,9 @@
 ---
 phase: 05-codex-cli-and-opencode-validation
 verified: 2026-06-15T01:10:00Z
-status: human_needed
+status: verified
+human_verification_completed: 2026-06-15T02:30:00Z
+human_verification_outcome: "All 3 human-verification items PASSED via UAT (05-UAT.md). Live run: stage 2.5 UNKNOWN, stage 3 recreate_delta == 1, exit 0. Falsifiability: fresh_mode=bogus -> exit 1 at stage 3 (not 1/2). delta == 1 confirmed empirically."
 score: 5/5 must-haves verified
 overrides_applied: 0
 re_verification:
@@ -28,7 +30,7 @@ human_verification:
 
 **Phase Goal:** Codex CLI と OpenCode を実機で駆動し、ターンファイル方式での結果取得が動作することを E2E で確認できる。
 **Verified:** 2026-06-15T01:10:00Z
-**Status:** human_needed
+**Status:** verified (human verification completed 2026-06-15 via 05-UAT.md — all 3 items PASSED)
 **Re-verification:** Yes — after gap closure (05-03 plan + 05-REVIEW-FIX)
 
 ## Re-verification Summary
