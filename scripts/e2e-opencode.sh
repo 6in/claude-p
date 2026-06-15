@@ -271,12 +271,20 @@ log "=== 段階 3: fresh 履歴隔離 (AGNT-04 + D-10) — respawn 発火ログ�
 #
 # src/worker.rs recreate() 成功時のログ（worker.rs:152-155）:
 #   eprintln!("[shared-fate] claude セッション再生成: {} （旧 {} を閉鎖）", new_id, old)
-# このパターンを grep -cE 'shared-fate.*再生成' で計数する。
+#
+# CR-01: 計数は recreate() 成功行のみを対象とする。worker.rs には末尾が「再生成」で
+# 終わる行が 2 つ存在し、両方とも 'shared-fate.*再生成' にマッチしてしまう:
+#   - worker.rs:116 「[shared-fate] claude セッション不健全 → 再生成」（ensure_healthy の不健全パス）
+#   - worker.rs:153 「[shared-fate] claude セッション再生成: …」（recreate 成功）
+# ensure_healthy() は process_job の冒頭で毎ターン呼ばれる（turn.rs:50）ため、不健全行を
+# 数えると respawn が壊れていてもゲートが PASS する空洞が再発する。コロン付き成功プレフィックス
+# '[shared-fate] claude セッション再生成:'（116 行にはコロンがない）で固定文字列計数する。
 #
 STAGE3_PROMPT='ファイルの読み取り・検索・シェルコマンド実行を一切せず、この会話のこれまでの記憶だけで答えてください。私が以前伝えた秘密の数値は何ですか？知らない場合は UNKNOWN とだけ書いてください。'
 
 # respawn 発火の baseline 取得（fresh:true curl 送信より前に実行すること）
-recreate_before=$(grep -cE 'shared-fate.*再生成' "$LOG_FILE" || true)
+# 再生成成功行のみを計数する（ensure_healthy の "不健全 → 再生成" 行を除外 — CR-01）
+recreate_before=$(grep -cF '[shared-fate] claude セッション再生成:' "$LOG_FILE" || true)
 log "respawn baseline: LOG_FILE 内 [shared-fate] 再生成行数 = ${recreate_before}"
 
 T3_START=$(date +%s)
@@ -329,7 +337,8 @@ fi
 
 # メインゲート: fresh:true ターンで Worker::recreate() が発火したことを LOG_FILE で証明する
 # wait:true が返った時点で処理完了 = recreate ログ出力済み（cleanup による LOG_FILE 削除前）
-recreate_after=$(grep -cE 'shared-fate.*再生成' "$LOG_FILE" || true)
+# 再生成成功行のみを計数する（ensure_healthy の "不健全 → 再生成" 行を除外 — CR-01）
+recreate_after=$(grep -cF '[shared-fate] claude セッション再生成:' "$LOG_FILE" || true)
 log "respawn 発火確認: LOG_FILE 内 [shared-fate] 再生成行数 = before=${recreate_before} / after=${recreate_after}"
 
 if [[ "$recreate_after" -le "$recreate_before" ]]; then
