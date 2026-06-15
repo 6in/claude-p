@@ -1,6 +1,6 @@
 ---
 phase: 05-codex-cli-and-opencode-validation
-reviewed: 2026-06-12T10:00:59Z
+reviewed: 2026-06-15T00:00:00Z
 depth: standard
 files_reviewed: 9
 files_reviewed_list:
@@ -15,222 +15,277 @@ files_reviewed_list:
   - src/worker.rs
 findings:
   critical: 1
-  warning: 9
+  warning: 6
   info: 5
-  total: 15
+  total: 12
 status: issues_found
 ---
 
-# Phase 5: Code Review Report
+# Phase 05: Code Review Report
 
-**Reviewed:** 2026-06-12T10:00:59Z
+**Reviewed:** 2026-06-15
 **Depth:** standard
 **Files Reviewed:** 9
 **Status:** issues_found
 
 ## Summary
 
-Reviewed the Codex CLI / OpenCode validation deliverables: two agent profiles, three shell scripts (E2E x2, runner, setup), and the three Rust modules they exercise (`profile.rs`, `turn.rs`, `worker.rs`). Cross-file facts were verified against `main.rs`, `http.rs`, `config.rs`, and `mcp.rs` (turn_id whitelist exists at `http.rs:106`; `TURNS_DIR/<agent>` join happens in `main.rs`; `submit_line` routes through `ht_send_keys`).
+Phase 05 validates the Codex and OpenCode agent profiles end-to-end. The most recent
+change (plan 05-03) reworked `scripts/e2e-opencode.sh` to make the AGNT-04 `fresh:true`
+respawn check falsifiable by gating on a `[shared-fate]` recreate-log delta.
 
-Key concerns:
+The central problem is in exactly that gate: the grep pattern used to count
+`Worker::recreate()` firings (`shared-fate.*再生成`) also matches the
+`ensure_healthy()` health-failure log line (`worker.rs:116`), which fires at the start
+of **every** turn. This re-opens the falsifiability hole the plan set out to close —
+the gate can pass even when the `respawn` fresh path never executes. That is the
+BLOCKER (CR-01).
 
-1. **The OpenCode fresh-isolation E2E (AGNT-04) is vacuous** — given the `opencode run` wrapper architecture, every turn is already a new conversation, so the stage 2 → stage 3 isolation test cannot fail even if `fresh_mode = "respawn"` were completely broken (CR-01).
-2. **E2E assertions are weak across both scripts** — `status: "unknown"` passes, and stage 3 passes on an empty result (WR-01, WR-02).
-3. **Documented contradiction** between `agents/opencode.toml` Pitfall 1 ("ht_send_keys silently drops multibyte") and `agents/codex.toml`'s Japanese `trigger_template` (WR-04).
-4. **`opencode-runner.sh` `eval`s unvalidated PTY input**, which turns the existing `POST /command` endpoint into a direct shell-execution path (WR-05).
-5. **`setup-opencode.sh` silently downgrades the user's machine-wide OpenCode security posture** by writing `"bash": "allow"` into the global config (WR-06).
-
-No findings rise to data-loss or remote-compromise level given the loopback-only, intentionally-YOLO threat model, but the Critical finding means a stated phase requirement (AGNT-04) is not actually verified by the artifact that claims to verify it.
-
-## Narrative Findings (AI reviewer)
+Beyond that, the warnings concern: a baseline-counting weakness in the same gate, an
+`eval`-based command runner that silently swallows runner failures, asymmetric and
+weaker assertions between the codex and opencode scripts, a `head -c` pipe that can
+trip `set -o pipefail` on large results, and a TURNS_DIR override that depends on an
+undocumented per-agent join. The Rust source (`profile.rs`, `turn.rs`, `worker.rs`) is
+solid; findings there are minor.
 
 ## Critical Issues
 
-### CR-01: AGNT-04 fresh-isolation test for OpenCode is vacuous — it cannot fail
+### CR-01: Stage-3 recreate-delta gate matches `ensure_healthy()` log, defeating the falsifiability fix
 
-**File:** `scripts/e2e-opencode.sh:186-262` (stages 2–3), `agents/opencode.toml:55-63`, `scripts/opencode-runner.sh:26-41`
-**Issue:** The OpenCode integration runs each turn as a separate `opencode run --command turn <path>` invocation (D-09 wrapper). `opencode run` starts a **new session per invocation** (no `--continue`/`--session` flag is passed), and `agents/opencode.toml:58` itself documents this: "opencode run は1ターンで終了するため、respawn で毎ターン新しいコンテキストになる". Consequently:
+**File:** `scripts/e2e-opencode.sh:279,332,335` (gate) / `src/worker.rs:116,153` (logs)
 
-- Stage 2 ("Remember this secret number: 7331") seeds memory into a conversation context that is discarded the moment that `opencode run` process exits.
-- Stage 3 (`fresh: true`) then asserts 7331 does not leak — but 7331 can **never** leak through conversation history in this architecture, regardless of whether `fresh_mode = "respawn"` works, because non-fresh turns share no history either.
+**Issue:**
+The whole point of the 05-03 gap-closure is that the stage-3 gate must FAIL if the
+`fresh_mode=respawn` path does not actually fire `Worker::recreate()`. The gate counts
+log lines matching `shared-fate.*再生成`:
 
-The test labeled "AGNT-04: fresh 履歴隔離" therefore provides false assurance: it would pass identically if `recreate()` were a no-op, if `fresh_mode` were misconfigured, or if the `fresh` flag were silently dropped. A validation deliverable whose pass condition is unfalsifiable is incorrect behavior of the deliverable itself.
-
-This also surfaces an undocumented API-contract divergence: for claude/codex, non-fresh turns continue a conversation; for opencode, they do not. Neither `agents/opencode.toml` nor the runner states that non-fresh history continuity is unsupported for this agent.
-
-**Fix:** Two options, in order of preference:
-
-1. Make the test honest about what it can verify. Add a positive-control stage between 2 and 3 that sends a **non-fresh** "what was the secret number?" query. For opencode this control will show no memory, proving stages 2–3 cannot test isolation; replace the stage-3 assertion with a structural check that `fresh: true` actually triggered respawn (e.g., grep the server log for the `[shared-fate]`/recreate line emitted by `Worker::recreate`, or assert a new runner PID/session id):
 ```bash
-# 段階 2.5: 非 fresh での記憶確認（positive control）
-response_ctl=$(curl -s --max-time 720 -X POST "$BASE_URL/prompt" \
-    -H 'Content-Type: application/json' \
-    -d '{"prompt":"What secret number did I tell you earlier in this conversation? Answer UNKNOWN if you do not know.","wait":true}')
-# opencode では UNKNOWN が期待値 → 会話継続性がないことを明示的に記録し、
-# 段階 3 は「respawn が実際に発火した」ことをサーバログで検証する方式に変更する
+recreate_before=$(grep -cE 'shared-fate.*再生成' "$LOG_FILE" || true)
+...
+recreate_after=$(grep -cE 'shared-fate.*再生成' "$LOG_FILE" || true)
+if [[ "$recreate_after" -le "$recreate_before" ]]; then ... FAIL
 ```
-2. Or give the opencode integration real conversation continuity (e.g., `opencode run --continue` for non-fresh turns, plain `opencode run` for fresh ones), at which point the existing stage 2 → 3 test becomes meaningful. Document the chosen contract in `agents/opencode.toml`.
+
+But `src/worker.rs` emits **two** distinct `[shared-fate] ... 再生成` lines, and both
+match the pattern:
+
+- `worker.rs:116` — `eprintln!("[shared-fate] claude セッション不健全 → 再生成")`
+  (printed by `ensure_healthy()` when the health snapshot fails)
+- `worker.rs:153` — `eprintln!("[shared-fate] claude セッション再生成: {} ...")`
+  (printed at the end of `recreate()` on success)
+
+Critically, `process_job()` calls `worker.ensure_healthy().await?` at the very start of
+**every** turn (`src/turn.rs:50`), before the `fresh_mode` dispatch. If the OpenCode
+session is judged unhealthy during the stage-3 turn — plausible because the
+`opencode-runner.sh` wrapper screen only contains the `ready_pattern`
+("OpenCodeRunner ready") between turns and may not match mid-turn — `ensure_healthy()`
+prints line 116 and the delta becomes positive even if the `respawn` branch is broken
+or `fresh` is ignored. The gate then PASSES for the wrong reason, exactly the
+vacuous-pass failure mode the plan was written to eliminate.
+
+Even on the happy path, line 116 is not the success line; matching it means the gate
+measures "any shared-fate activity," not "recreate succeeded for the fresh turn."
+
+**Fix:** Anchor the grep to the unambiguous success line only (the one with the colon +
+old-session text from `recreate()` at `worker.rs:153`), so health-check failures do not
+count:
+
+```bash
+# 再生成成功行のみを計数する（ensure_healthy の "不健全 → 再生成" 行を除外）
+recreate_before=$(grep -cF '[shared-fate] claude セッション再生成:' "$LOG_FILE" || true)
+...
+recreate_after=$(grep -cF '[shared-fate] claude セッション再生成:' "$LOG_FILE" || true)
+```
+
+The fixed prefix `[shared-fate] claude セッション再生成:` (note the colon, which line
+116 lacks) selects only successful `recreate()` completions and excludes the
+`ensure_healthy()` unhealthy-path line. Recommend also asserting the delta equals the
+expected count (1 for one fresh turn) rather than just `>`.
 
 ## Warnings
 
-### WR-01: E2E success assertions accept `status: "unknown"` — should require `"done"`
+### WR-01: `recreate_before` baseline cannot distinguish health-driven recreations from fresh-driven ones
 
-**File:** `scripts/e2e-codex.sh:165, 193, 234`; `scripts/e2e-opencode.sh:176, 204, 243`
-**Issue:** Every stage gate is `if [[ "$status" == "timeout" ]] || [[ "$status" == "failed" ]]`. `read_turn` (`src/turn.rs:117-120`) returns `"unknown"` when the status JSON is garbled or missing a `status` key, and the jq fallback in the script itself produces `"unknown"` for a malformed HTTP body. Both cases sail through the gate and the stage is logged as PASS. A run where the agent writes a corrupt status file is reported as a successful validation.
-**Fix:** Invert the check to allowlist the only success value:
-```bash
-if [[ "$status1" != "done" ]]; then
-    log "ERROR: 段階 1 失敗 (status=${status1}, 期待値 done)"
-    exit 1
-fi
-```
-Apply to all three stages in both scripts.
+**File:** `scripts/e2e-opencode.sh:279,335`
 
-### WR-02: Stage 3 passes vacuously on an empty result; codex test lacks a positive control
+**Issue:** Even after CR-01 narrows the pattern to the success line, the gate only
+proves *some* `recreate()` completed between baseline and after — it does not prove the
+fresh/respawn branch caused it. `ensure_healthy()` itself calls `recreate()` (and thus
+emits the success line at `worker.rs:153`) whenever the snapshot lacks the ready
+pattern. So a stage-3 turn where `fresh` was ignored but the session happened to be
+judged unhealthy would still increment the counter and PASS. The `after > before`
+comparison is necessary but not sufficient to attribute the recreate to the fresh path.
 
-**File:** `scripts/e2e-codex.sh:241-253`; `scripts/e2e-opencode.sh:250-262`
-**Issue:** Two gaps in the isolation check:
-1. `echo "$result3" | grep -q "7331"` passes when `result3` is empty or content-free. An agent that writes an empty result file (status still `done`) yields PASS for the headline isolation claim.
-2. (codex) There is no positive control proving that non-fresh history persistence works at all. If `ensure_healthy` is silently recreating the session every turn (see WR-03), stage 2's seed never persists and stage 3 passes for the wrong reason. The `UNKNOWN` check at line 249 is informational only (`INFO` log), so it never gates.
-**Fix:** Require a non-empty result and require the expected `UNKNOWN` marker as a hard gate; for codex add a non-fresh control turn before stage 3 that must contain `7331`:
-```bash
-if [[ -z "$result3" ]]; then
-    log "ERROR: 段階 3 失敗 — result が空（隔離検証は空回答では成立しない）"
-    exit 1
-fi
-if ! echo "$result3" | grep -qi "UNKNOWN"; then
-    log "ERROR: 段階 3 失敗 — UNKNOWN が含まれない（回答の意味論が不明）"
-    exit 1
-fi
-```
+**Fix:** Assert the delta equals exactly 1 for the single fresh turn, and document that
+an `ensure_healthy()`-driven recreate during the same turn would inflate it. Better:
+add a distinct log marker on the `fresh`+respawn branch in `src/turn.rs` (e.g.
+`eprintln!("[fresh-respawn] ...")`) and gate on that marker so the signal is
+unambiguous about *why* recreate fired.
 
-### WR-03: `ready_pattern = "YOLO mode"` may scroll off-screen, causing per-turn shared-fate recreation that silently destroys non-fresh history
-
-**File:** `agents/codex.toml:32-35`; `src/worker.rs:109-120`
-**Issue:** "YOLO mode" is a startup banner. `ensure_healthy` (`worker.rs:109`) takes a screen snapshot at the start of every job and treats the session as dead if the pattern is absent — and then `recreate()`s it. If the banner scrolls out of the visible PTY screen after a turn produces output (likely for any multi-line answer), every subsequent job triggers `[shared-fate]` recreation, wiping conversation history for **non-fresh** turns with no error surfaced to the client. The E2E suite cannot detect this (see WR-02 — stage 3 expects no memory, so per-turn wipes make it pass). Contrast with `opencode-runner.sh`, which deliberately re-prints its ready string after every turn (`opencode-runner.sh:36`) precisely so the pattern stays at the bottom of the screen.
-**Fix:** Verify on a real codex TUI whether a persistent footer/status element exists and use that as `ready_pattern`; otherwise during the E2E assert the server log contains zero `[shared-fate]` lines after startup:
-```bash
-if grep -q '\[shared-fate\]' "$LOG_FILE"; then
-    log "ERROR: ターン間に shared-fate 再生成が発生 — ready_pattern が画面から消えている可能性"
-    exit 1
-fi
-```
-
-### WR-04: Japanese `trigger_template` in codex.toml contradicts documented Pitfall 1 (ht_send_keys drops multibyte)
-
-**File:** `agents/codex.toml:55`; `agents/opencode.toml:24-25`
-**Issue:** `agents/opencode.toml` documents as a transport-level fact: "ht-mcp ht_send_keys は日本語/マルチバイト文字を無音で破棄する（Pitfall 1）→ trigger_template は ASCII のみ使用すること". Yet `agents/codex.toml:55` sets `trigger_template = "{prompt_path} を読んで、その指示に従ってください。"` — the trigger is delivered via the same `submit_line → send_keys("ht_send_keys")` path (`src/mcp.rs:224-227`). If Pitfall 1 holds, codex receives only the bare path (Japanese silently stripped) and the E2E "実機検証済み" claim passed by accident (codex happening to read a bare path). If Pitfall 1 does not hold, the opencode.toml documentation is wrong. Both files cannot be correct simultaneously; either way, codex's trigger semantics are luck-dependent.
-**Fix:** Make the codex trigger ASCII-only, matching the opencode convention:
-```toml
-trigger_template = "Read the file {prompt_path} and follow the instructions in it."
-```
-Or, if multibyte send_keys was re-verified as working, correct the Pitfall 1 note in `agents/opencode.toml` and record the scope (which ht-mcp version/agent).
-
-### WR-05: `opencode-runner.sh` `eval`s unvalidated stdin — turns `POST /command` into direct shell execution and breaks on paths with spaces/metacharacters
+### WR-02: `opencode-runner.sh` swallows runner exit status with `|| true`, hiding agent-side failures
 
 **File:** `scripts/opencode-runner.sh:33`
-**Issue:** `eval "$trigger" 2>&1 || true` executes any line arriving on the runner's PTY stdin as shell code. Two concrete problems:
-1. The existing `POST /command {"text":"..."}` endpoint sends raw text via `submit_line` to the active session. For `AGENT=claude` that means TUI keystrokes; for `AGENT=opencode` the same endpoint now means **arbitrary shell execution as the server user, with no agent guardrails in between**. The endpoint's contract silently changed per-agent. (Mitigated by loopback-only bind and the fact that `/prompt` already grants agent-mediated execution, hence Warning not Critical — but it removes even the agent layer.)
-2. The comment at lines 31-32 acknowledges that paths with spaces break. The path is `TURNS_DIR`-derived (operator env, `config.rs:30`); a `TURNS_DIR` containing spaces or shell metacharacters mangles or executes parts of the path. Nothing validates this at startup.
-**Fix:** Stop evaluating arbitrary lines. Validate the expected shape and invoke without `eval`:
+
+**Issue:**
 ```bash
-if [[ "$trigger" == "opencode run --command turn "* ]]; then
-    path="${trigger#opencode run --command turn }"
-    opencode run --command turn "$path" 2>&1 || true
-else
-    echo "[runner] 不正なトリガーを無視: $trigger" >&2
-fi
+eval "$trigger" 2>&1 || true
 ```
-(Cleaner still: change `trigger_template` to send only `{prompt_path}` and hardcode the command in the runner.)
+`opencode run` failures (auth expired, model error, non-zero exit) are silently
+discarded and the wrapper re-emits "OpenCodeRunner ready" as if the turn succeeded.
+Because the completion signal is the `status-<id>.json` file, a failed `opencode run`
+that never wrote the status file surfaces as a 300s turn *timeout* instead of a fast,
+diagnosable failure. The `2>&1` also merges stderr into the runner's stdout, which
+ht-mcp captures as TUI screen content — error text could coincidentally contain the
+`ready_pattern` or pollute snapshot matching.
 
-### WR-06: `setup-opencode.sh` grants machine-wide `bash`/`edit` auto-approval in the user's global OpenCode config
-
-**File:** `scripts/setup-opencode.sh:56-75`
-**Issue:** The script writes `"permission": { "bash": "allow", "edit": "allow", ... }` to `~/.config/opencode/opencode.json` — the user's **global** config. This auto-approves shell execution and file edits for every OpenCode session the user ever runs, in any project, not just ht-webif turns. A prompt-injected or misbehaving model in an unrelated interactive session can then run bash without confirmation. The log message (line 74) names the tools but not the global scope. OpenCode supports project-scoped `opencode.json` at the project root, which would confine the blast radius to this repo.
-**Fix:** Write the permission config to the project root (the directory ht-webif runs opencode in) instead of `$XDG_CONFIG_HOME`, or at minimum print an explicit warning that the setting is global and require interactive confirmation:
+**Fix:** Keep the loop alive but log the exit code to stderr (not the PTY stdout that
+becomes screen content):
 ```bash
-OPENCODE_JSON="$WEBIF_DIR/opencode.json"   # プロジェクトスコープに限定
-```
-
-### WR-07: `setup-opencode.sh` existence-only idempotency does not actually guarantee preconditions
-
-**File:** `scripts/setup-opencode.sh:30-31, 56-57`
-**Issue:** Both artifacts are skipped if the file merely exists. The script's stated purpose ("前提条件を充足する") is not met in two realistic cases:
-1. A pre-existing user `opencode.json` without the `permission` block (or with `"ask"` values) is left untouched — turns will then hang on confirmation dialogs and time out, with the setup script having reported success.
-2. A pre-existing or drifted `turn.md` whose body lacks `$ARGUMENTS` silently breaks the trigger path.
-The E2E script (`e2e-opencode.sh:121`) relies on this setup call to guarantee correctness, so drift produces confusing downstream timeouts rather than a clear setup error.
-**Fix:** Validate content when the file exists; fail (or warn loudly) on mismatch:
-```bash
-if [[ -f "$TURN_CMD_FILE" ]] && ! grep -q '\$ARGUMENTS' "$TURN_CMD_FILE"; then
-    log "ERROR: 既存の turn.md に \$ARGUMENTS がありません: $TURN_CMD_FILE"
-    exit 1
-fi
-if [[ -f "$OPENCODE_JSON" ]] && ! jq -e '.permission.bash == "allow"' "$OPENCODE_JSON" >/dev/null 2>&1; then
-    log "WARNING: 既存の opencode.json に permission.bash=allow がありません — ターンがタイムアウトする可能性"
+if ! eval "$trigger"; then
+    echo "[opencode-runner] WARN: trigger 失敗 (rc=$?): $trigger" >&2
 fi
 ```
 
-### WR-08: `fresh_mode` is not validated at profile load; mandatory `clear_command` forces a known-broken value into opencode.toml
+### WR-03: codex stage-3 isolation assertion is structurally weaker than opencode and can pass vacuously
 
-**File:** `src/profile.rs:18-20, 91-102`; `src/turn.rs:62-64`; `agents/opencode.toml:60-63`
-**Issue:** Two related schema gaps:
-1. `validate_profile` checks placeholders but not `fresh_mode`. A typo (`fresh_mode = "comand"`) passes startup validation and only surfaces at the **first `fresh:true` request** as a runtime job failure (`turn.rs:63`). This contradicts the D-11 fail-fast principle the same function exists to enforce.
-2. `clear_command` is a required `String` even when `fresh_mode = "respawn"` makes it dead config. As a result `agents/opencode.toml:63` stores `/new` — a value the file's own header (`e2e-opencode.sh:10-12`, D-01) documents as **broken** (it opens an agent-selection dialog and wedges the session). Anyone flipping `fresh_mode` to `"command"` later inherits a silent isolation failure.
-**Fix:** In `validate_profile`:
-```rust
-match p.fresh_mode.as_str() {
-    "command" | "respawn" => {}
-    other => anyhow::bail!("agents/{name}.toml: 未知の fresh_mode: {other}（command | respawn）"),
-}
+**File:** `scripts/e2e-codex.sh:241-253`
+
+**Issue:** The codex stage-3 "history isolation" check is only:
+```bash
+if echo "$result3" | grep -q "7331"; then ... FAIL
 ```
-And make `clear_command` an `Option<String>` validated as `Some` only when `fresh_mode == "command"`, removing the `/new` trap from opencode.toml.
+There is no hard gate that `result3` is non-empty and no requirement that it contain
+`UNKNOWN` (UNKNOWN is only an INFO at line 249). An empty result, or any answer that
+simply omits "7331", passes. This is the same vacuous-pass class the opencode script
+was explicitly hardened against in stage 3 (`e2e-opencode.sh:308-320` add empty +
+UNKNOWN hard gates). For Codex it is arguably worse because the fresh path is
+`fresh_mode="command"` (`/clear`), whose actual context reset is not observable from
+the result text — a broken `/clear` still passes as long as the model omits 7331. Two
+scripts validating the same property (AGNT-02 vs AGNT-04) should not diverge in rigor.
 
-### WR-09: `recreate`/`restart` leak the newly created session on ready-timeout error path
+**Fix:** Mirror the opencode hard gates: fail if `result3` is empty, and fail if
+`result3` does not contain `UNKNOWN`. Note in a comment that `fresh_mode=command`
+isolation is not log-observable the way respawn is, so the result-text gate is the
+strongest available signal.
 
-**File:** `src/worker.rs:126-157` (recreate, esp. 145-147), `src/worker.rs:172-202` (restart, esp. 191-193)
-**Issue:** Both functions call `create_session` and then poll for `ready_pattern`. On timeout they `return Err(...)` **without closing the new session**: the freshly spawned agent TUI (claude/codex/opencode runner) keeps running inside ht-mcp, orphaned, while `self.session_id` still points at the old (likely dead) session. Unlike a startup failure (where `main` exits and `kill_on_drop` reaps everything), `recreate` failures occur mid-life — repeated failures accumulate live agent processes (CPU + potential subscription-session pressure). CLAUDE.md explicitly lists "leaking the old session when creating a new one" as an anti-pattern; this is its mirror image on the error path.
-**Fix:** Close the new session before propagating the error, in both functions:
-```rust
-if Instant::now() > deadline {
-    let _ = self.client.close_session(&new_id).await;
-    return Err(anyhow!("claude TUI が起動しない:\n{snap}"));
-}
+### WR-04: `$(... | head -c N)` under `pipefail` can SIGPIPE-fail on large results
+
+**File:** `scripts/e2e-codex.sh:163,166,232,235,244`; `scripts/e2e-opencode.sh:175,179,240,300,304,318,326`
+
+**Issue:** With `set -o pipefail`, `echo "$resultN" | head -c 100` makes `head` close
+the pipe after 100 bytes; for a large `resultN`, `echo` receives SIGPIPE (exit 141) and
+the pipeline reports failure. These pipes sit inside `log "...$(...)..."` substitutions,
+so in practice they usually do not abort the script, but it is fragile: moving any of
+them into an `if`/assignment context, or running under a shell where the substitution
+status propagates, causes spurious failures on long agent outputs. A latent hazard
+created by combining `pipefail` with truncating consumers.
+
+**Fix:** Use pure-bash slicing, which avoids the pipe entirely:
+```bash
+log "段階 3 result 先頭 100 文字: ${result3:0:100}"
 ```
+
+### WR-05: codex `TURNS_DIR="./turns"` override silently depends on the undocumented per-agent join
+
+**File:** `scripts/e2e-codex.sh:115`; `scripts/e2e-opencode.sh:127`
+
+**Issue:** Both scripts launch with `TURNS_DIR="./turns"`. `agents/codex.toml:16-19`
+warns that Codex rejects file reads outside the project root and that the default
+`./turns/codex/` (D-16) must be used. The scripts rely on `main.rs:37`
+(`turns_base.join(&agent_name)`) to expand `./turns` into `./turns/codex`. That is
+correct today, but it is hidden coupling: the script hard-codes `./turns` only to land
+inside the project root, and the per-agent suffix is applied elsewhere. If D-16
+behavior changes the codex path-escape error returns. The override also discards any
+`TURNS_DIR` the operator configured in `.env` with no log line stating the E2E forces
+`./turns`.
+
+**Fix:** Add a comment in both scripts referencing D-16 and the codex path-root
+constraint explaining why `./turns` is forced; optionally `log` the effective turns
+directory after server start so a misconfig is diagnosable.
+
+### WR-06: stage-2.5 control treats a `7331` leak as a non-fatal WARNING, weakening the control
+
+**File:** `scripts/e2e-opencode.sh:251-253`
+
+**Issue:** Stage 2.5 is the positive control establishing that the D-09 architecture
+has no cross-turn continuity (expected: UNKNOWN). If `7331` appears in the non-fresh
+response, the script only logs a WARNING and continues. But a `7331` leak in the
+*non-fresh* control directly undermines the stage-3 conclusion: if the architecture
+leaks 7331 without fresh, then stage 3's "no 7331" sub-check (line 323) proves nothing,
+and the methodology premise ("段階 2→3 の 7331 非出現は隔離の証拠にならない") is the
+very thing being demonstrated — yet a positive 7331 here is silently tolerated. The
+control can report PASS while quietly recording the condition that invalidates the
+file-search-prohibition methodology.
+
+**Fix:** Decide intent explicitly. If the file-search prohibition is supposed to hold,
+a `7331` in stage 2.5 should fail the run. If file-search leakage is expected and the
+methodology relies only on the log-delta gate, say so and drop the misleading
+"ファイル検索由来の可能性が高い" warning in favor of a clear recorded outcome.
 
 ## Info
 
-### IN-01: Magic 1000ms sleep after fresh reset
+### IN-01: `wait_for_server` would accept a stale server already bound to the port
 
-**File:** `src/turn.rs:66`
-**Issue:** `tokio::time::sleep(Duration::from_millis(1000))` after `clear_command`/`recreate` is an unexplained magic number; whether 1s is sufficient for codex `/clear` processing is asserted nowhere.
-**Fix:** Promote to a named constant (`const FRESH_SETTLE: Duration = ...`) or a profile field (parallel to `startup_settle_ms`) with a comment citing the measured basis.
+**File:** `scripts/e2e-codex.sh:128`; `scripts/e2e-opencode.sh:140`
 
-### IN-02: Unexplained `doom_loop` permission key
+**Issue:** `curl ... "$BASE_URL/turns/0"` returning success is the readiness signal
+(404 OK by design). A different process already bound to the dedicated port (e.g. a
+stale server from a crashed prior run) would also satisfy this and the test would run
+against the wrong server. Low likelihood given dedicated ports 8081/8082.
 
-**File:** `scripts/setup-opencode.sh:70`
-**Issue:** `"doom_loop": "allow"` is granted with no comment explaining what tool this is, unlike every other key which maps to a known OpenCode tool. If it is not a real tool key it is dead config; if it is, it deserves the same documentation as the Pitfall 8 notes.
-**Fix:** Add a one-line comment citing the OpenCode feature, or remove the key.
+**Fix:** Optionally probe that the port is free before launching cargo, or correlate the
+expected `AGENT`/PID in the readiness check.
 
-### IN-03: Ready-wait polling loop triplicated across `spawn_session`, `recreate`, `restart`
+### IN-02: Duplicated cleanup / require_tool / wait_for_server boilerplate across the two E2E scripts
 
-**File:** `src/worker.rs:55-71, 134-149, 180-195`
-**Issue:** Three near-identical copies of the snapshot/ready_pattern/settle/deadline loop. They have already drifted cosmetically (eprintln formatting); the WR-09 fix must now be applied in two places, illustrating the maintenance cost.
-**Fix:** Extract a single `async fn wait_ready(client: &mut M, session_id: &str, profile: &AgentProfile) -> Result<()>` in the generic impl and call it from all three sites.
+**File:** `scripts/e2e-codex.sh:42-139`; `scripts/e2e-opencode.sh:50-151`
 
-### IN-04: `command = ["bash", "scripts/opencode-runner.sh"]` is cwd-dependent
+**Issue:** `log`, `require_tool`, `cleanup`, and `wait_for_server` are near-identical
+copies. Divergence already exists (the status allowlist hardening in WR-03 lives only in
+opencode). Shared helpers would prevent the two scripts from drifting in rigor.
 
-**File:** `agents/opencode.toml:48`
-**Issue:** The runner path is relative; it resolves against ht-webif's cwd (inherited by ht-mcp's child). Starting `ht-webif` from any other directory fails at session spawn with the generic "claude TUI が起動しない" snapshot error rather than a clear "runner script not found". claude/codex profiles are immune because they are PATH-resolved binaries.
-**Fix:** Document the cwd requirement in the toml header, or resolve the script to an absolute path at profile load.
+**Fix:** Extract a `scripts/e2e-lib.sh` sourced by both, or add a comment
+cross-referencing the sibling script so future edits stay in sync.
 
-### IN-05: ~90% duplication between the two E2E scripts; stage-1 log text mismatch in e2e-codex
+### IN-03: `opencode.toml` `clear_command = "/new"` is dead config and a known-broken value under `fresh_mode=respawn`
 
-**File:** `scripts/e2e-codex.sh`, `scripts/e2e-opencode.sh` (whole files); `scripts/e2e-codex.sh:146` vs `:151`
-**Issue:** The two scripts share cleanup, tool checks, server startup, wait loop, and the three-stage skeleton nearly verbatim — every assertion fix (WR-01/WR-02) must be applied twice. Minor: `e2e-codex.sh:146` logs "プロンプト送信: 2+2 は何？" while the actual payload at line 151 is the English "What is 2+2? Answer with the number only."
-**Fix:** Extract shared helpers into `scripts/e2e-lib.sh` (log/cleanup/require_tool/wait_for_server/stage runner) sourced by both; align the log string with the actual prompt.
+**File:** `agents/opencode.toml:56-57`
+
+**Issue:** `process_job` reads `clear_command` only in the `"command"` branch
+(`turn.rs:55-58`), so `/new` is never sent under respawn. Harmless today, but `/new` is
+documented (in `e2e-opencode.sh:12-16`) as actively broken (opens an agent-selection
+dialog). Keeping a known-broken value in a live field invites a future maintainer to
+flip `fresh_mode` back to `command` and silently re-introduce the D-01 dialog-stuck bug.
+
+**Fix:** Set `clear_command = ""` with a comment that respawn ignores it, or add an
+inline warning that `/new` must NOT be used with `fresh_mode=command`.
+
+### IN-04: `eval` safety comment in `opencode-runner.sh` understates the real injection guard
+
+**File:** `scripts/opencode-runner.sh:32-33`
+
+**Issue:** The comment justifies `eval` by claiming turnId format has no spaces. `eval`
+executes the entire trigger string, which is built from `opencode.toml`'s
+`trigger_template` plus the prompt path. The actual safety guarantee is that the path is
+derived from a server-allocated turnId whitelisted to `^[0-9-]+$` (CLAUDE.md), not "no
+spaces" — "no spaces" would not stop shell metacharacters if the turnId rule loosened.
+
+**Fix:** Update the comment to cite the turnId whitelist (`^[0-9-]+$`) as the injection
+guard so the security invariant is tied to the real control.
+
+### IN-05: `process_job` sentinel polling is correct — noted for completeness
+
+**File:** `src/turn.rs:72-80`
+
+**Issue:** The wait loop checks `status_path.exists()` first each iteration, then sleeps
+1s. An agent writing status sub-second (before the loop starts) is still caught on
+iteration 1, and a status written between checks is picked up next iteration. No bug;
+sentinel polling matches HT-PROTOCOL §6.
+
+**Fix:** None required.
 
 ---
 
-_Reviewed: 2026-06-12T10:00:59Z_
+_Reviewed: 2026-06-15_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
