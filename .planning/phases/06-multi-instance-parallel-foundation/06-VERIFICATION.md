@@ -1,27 +1,47 @@
 ---
 phase: 06-multi-instance-parallel-foundation
-verified: 2026-06-15T08:20:00Z
+verified: 2026-06-15T09:42:00Z
 status: human_needed
-score: 4/4
+score: 9/9
 overrides_applied: 0
+re_verification:
+  previous_status: human_needed
+  previous_score: 4/4
+  gaps_closed:
+    - "同一インスタンスへ同一ミリ秒に並行 POST /prompt しても turnId が全件一意になる（HT-PROTOCOL §3.2 -<seq> 連番ガード）"
+    - "ベースタイムスタンプ衝突時に単調増加の数値サフィックス -<seq> が付与される"
+    - "壁時計後退時に過去 turnId を再発番しない（CR-01 単調非減少クランプ）"
+  gaps_remaining: []
+  regressions: []
 human_verification:
   - test: "複数インスタンスを実際に同時起動し、各 /info が正しいエージェント名を返すことを確認"
     expected: "just up-all 実行後、curl localhost:8080/info が {\"agent\":\"claude\",...}、curl localhost:8081/info が {\"agent\":\"codex\",...}、curl localhost:8082/info が {\"agent\":\"opencode\",...} を返す"
     why_human: "ht-mcp + claude/codex/opencode の実バイナリが必要。cargo テストでは代替不可。"
-  - test: "100 ターン並行実行時のターンファイルコリジョン非発生を確認"
-    expected: "2インスタンス同時稼働中に各インスタンスへ 50 ターン投入しても、turns-8080/claude/ と turns-8081/codex/ が互いのファイルを上書きしない"
-    why_human: "実際のマルチプロセス動作が必要。ユニットテストでは TURNS_DIR 分離の実行時挙動を確認不可。"
   - test: "/info の status フィールドがターン実行中は busy、完了後は idle になることを確認（WR-03 セマンティクス）"
     expected: "POST /prompt 直後の GET /info で status=busy、ターン完了後に status=idle が返る。in_flight 方式（キュー投入時点で busy）が意図したロードバランサ契約に合っているか確認"
     why_human: "WR-03 で busy の定義がデキューからキュー投入に変わった（in_flight > 0 で判定）。この変更がスケジューラ/ロードバランサ用途として正しい契約かは運用者の判断が必要。テストは初期値（in_flight=0 → idle）しか検証していない。"
 ---
 
-# Phase 6: Multi-Instance Parallel Foundation — Verification Report
+# Phase 6: Multi-Instance Parallel Foundation — Verification Report (Re-verification)
 
 **Phase Goal:** 複数エージェントのインスタンスを同時に立ち上げ、各インスタンスの状態を `GET /info` で観測しながら独立して curl で叩ける環境が整う。
-**Verified:** 2026-06-15T08:20:00Z
+**Verified:** 2026-06-15T09:42:00Z
 **Status:** human_needed
-**Re-verification:** No — initial verification
+**Re-verification:** Yes — after 06-04 gap closure (turnId collision fix + CR-01 backward-clock clamp)
+
+## Re-verification Scope
+
+This re-verification focuses exclusively on the 06-04 gap-closure must-haves. All truths from
+the initial 06-VERIFICATION.md (score 4/4) are carried forward as VERIFIED without regression;
+regression checks below confirm no regressions were introduced.
+
+The UAT Test 2 gap was: same-instance, same-millisecond concurrent `POST /prompt` produced
+colliding turnIds (`YYYYMMDD-HHMMSS-mmm`) that overwrote each other's prompt/result/status
+files. Plan 06-04 introduced `TurnIdAllocator` to close this gap. A subsequent code review
+(06-04-REVIEW.md) identified CR-01: the initial implementation used `base != last_base` as
+its branching condition, which allows NTP clock regression to re-emit a previously-issued bare
+turnId. The fix was to replace with `base > last_base` (strictly-greater), clamping backward
+clock movements to the existing `last_base` and incrementing `seq`.
 
 ## Goal Achievement
 
@@ -29,117 +49,142 @@ human_verification:
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | `GET /info` が稼働中のエージェント名・port・status・uptime・処理ターン数を含む JSON を返す | VERIFIED | `info_handler` が `agent_name/port/status/uptime_secs/turns_processed` の5フィールドを `Json<Value>` で返す（src/http.rs:56-73）。co-located テスト `info_handler_returns_five_fields_with_initial_values` が全フィールドと初期値を assert し 34/34 passed。`status` フィールドは WR-03 修正により `in_flight > 0` で判定（idle/busy 2状態、PARA-01/02 充足） |
-| 2 | `scripts/launch-agents.sh up` が instances.conf の各行を別ポートで一括起動し、各 `/info` が正しいエージェント名を返す | VERIFIED (code) / NEEDS HUMAN (runtime) | launcher が instances.conf の3行（claude:8080 / codex:8081 / opencode:8082）を読み、`check_info_agent` で `/info` の agent 名一致ポーリングを行う実装を確認（scripts/launch-agents.sh:69-87, 209-244）。`just up-all/down-all/agents-status` が launcher を呼ぶ（justfile:51-60）。bash -n 構文チェック合格。ただし実際の複数インスタンス同時起動は実バイナリが必要 |
-| 3 | 複数インスタンス同時稼働中のターンファイルコリジョン非発生（`TURNS_DIR` 分離で保証） | VERIFIED (code) / NEEDS HUMAN (runtime) | launcher がポートごとに `TURNS_DIR=${WEBIF_DIR}/turns-${port}` を spawn 時に渡す（launch-agents.sh:180）。サーバ側は D-16 で `turns_base.join(&agent_name)` を適用（main.rs:52）。WR-01 修正で launcher の表示パスも `turns-${port}/${agent}` に整合。異なるポートなら `turns-8080/claude/` と `turns-8081/codex/` は分離される。実動作確認は human 検証項目 |
-| 4 | README に多重インスタンス起動手順・CODEX_HOME 分離手順・クレデンシャル分離ガイドが記載されている | VERIFIED | README.md §複数インスタンス運用（line 70-165）に instances.conf 書式、just up-all/down-all/agents-status コマンド例、クレデンシャル分離表（claude=不要/理由、codex=必須+CODEX_HOME手順、opencode=不要/理由）が記載済み。CODEX_HOME 具体例 `codex login` コマンドも掲載 |
+| 1 | `GET /info` が稼働中のエージェント名・port・status・uptime・処理ターン数を含む JSON を返す | VERIFIED (carried) | 初回検証 VERIFIED。info_handler 実装変更なし。38テスト全グリーンで回帰なし |
+| 2 | `scripts/launch-agents.sh up` が instances.conf の各行を別ポートで一括起動し、各 `/info` が正しいエージェント名を返す | VERIFIED (code) / NEEDS HUMAN (runtime) | 初回検証と変わらず。06-04 はスクリプトを変更しない |
+| 3 | 複数インスタンス同時稼働中のターンファイルコリジョン非発生（`TURNS_DIR` 分離で保証） | VERIFIED (code) / NEEDS HUMAN (runtime) | クロスインスタンス分離: UAT で確認済み。同一インスタンス内コリジョン: TurnIdAllocator で解消（下記 06-04 Truths 1-5 参照） |
+| 4 | README に多重インスタンス起動手順・CODEX_HOME 分離手順・クレデンシャル分離ガイドが記載されている | VERIFIED (carried) | 06-04 はドキュメントを変更しない。回帰なし |
+| 5 | 同一インスタンスへ同一ミリ秒に N 並行 POST /prompt しても turnId が全件一意（HT-PROTOCOL §3.2 -<seq> 連番ガード） | VERIFIED | `next_turn_id()` が `tokio::sync::Mutex<TurnIdAllocatorState>` を単一直列化点として、`base > s.last_base` 分岐でリセットか連番を決定。N=1000 並行採番テスト(multi_thread, 4 workers)が 38/38 passed で 0 重複確認 |
+| 6 | ベースタイムスタンプ衝突時に単調増加の数値サフィックス -<seq>（例 20260615-090456-080-001）が付与される | VERIFIED | `else` 分岐: `s.seq.checked_add(1)` + `format!("{}-{:03}", s.last_base, s.seq)` (http.rs:112-115)。Test 3 が `with_seed("29991231-235959-999",0)` で全件クランプ経路に強制し、4セグメント・全数字サフィックスを決定論的に検証 |
+| 7 | 採番後の turn_id が既存ホワイトリスト `^[0-9-]+$` を満たす（英字なし） | VERIFIED | bare base: `YYYYMMDD-HHMMSS-mmm` = 数字+ハイフンのみ。サフィックス付き: `{base}-{seq:03}` = 数字+ハイフンのみ（英字形式 `-w02` は不採用）。Test 2 が N=1000 全件に `c.is_ascii_digit() \|\| c == '-'` を assert |
+| 8 | prompt_handler が採番のために worker Mutex を取得しない（CR-01 維持） | VERIFIED | `prompt_handler`(http.rs:187-244) は `state.turn_id_alloc.next_turn_id().await` のみで採番。`worker.lock()` 呼び出しは `command_handler`(line 287) と `restart_handler`(line 315) にのみ存在。既存テスト `prompt_handler_returns_turn_id_immediately_while_worker_mutex_is_held` が worker Mutex 保持中に 2 秒以内で 200 を返すことを検証(green) |
+| 9 | 壁時計が後退（NTP 補正等）しても過去 turnId を再発番しない（CR-01 単調非減少クランプ） | VERIFIED | `if base > s.last_base` (http.rs:100) — 厳密に大きい場合のみ新 base を採用。それ以外（同一 ms および後退）は `else` ブランチで `last_base` を維持し `seq` を進める。後退クランプ回帰テスト `turn_id_allocator_clamps_on_backward_clock_no_bare_reemit` が `with_seed("29991231-235959-999",0)` で 50 回採番し全件が seed より辞書順で大きく 4 セグメントであることを assert (green) |
 
-**Score:** 4/4 truths verified (2 truths have human-verifiable runtime components)
+**Score:** 9/9 truths verified (2 runtime truths carried as NEEDS HUMAN)
+
+## 06-04 Gap-Closure Artifacts
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `src/http.rs` | InstanceInfo struct + info_handler + /info route + AppState.instance_info | VERIFIED | `pub struct InstanceInfo` (line 25), `async fn info_handler` (line 55), `.route("/info", get(info_handler::<M>))` (line 256), `pub instance_info: Arc<InstanceInfo>` in AppState (line 46) |
-| `src/turn.rs` | worker_loop に instance_info 引数 + is_busy トグル + in_flight デクリメント + turns_processed インクリメント | VERIFIED | `worker_loop` signature に `instance_info: Arc<InstanceInfo>` (line 99), `is_busy.store(true/false)` (lines 103/107), `in_flight.fetch_sub(1)` (line 111), `turns_processed.fetch_add(1)` (lines 113-115) |
-| `src/main.rs` | InstanceInfo 構築 + AppState/worker_loop への配線 | VERIFIED | `InstanceInfo` 構築 (lines 38-45), `instance_info.clone()` を worker_loop に渡す (line 63), AppState に `instance_info` 追加 (line 72). `load_port()` 呼び出し1回のみ (line 35) |
-| `scripts/launch-agents.sh` | up/down-all/status サブコマンド、instances.conf 駆動、/info readiness、PID/ログ規約 | VERIFIED | 3サブコマンド実装済み (lines 90-406), instances.conf 読み込み (lines 111-264), check_info_agent ポーリング (lines 69-87), PID /tmp/ht-webif-${PORT}.pid (line 134), LOG /tmp/ht-webif-${PORT}.log (line 135) |
-| `instances.conf` | claude:8080 / codex:8081 CODEX_HOME=... / opencode:8082 の3行 | VERIFIED | 3行確認: `claude 8080`, `codex 8081 CODEX_HOME=/home/user/.codex-instance1`, `opencode 8082` |
-| `justfile` | up-all / down-all / agents-status レシピ | VERIFIED | 3レシピ確認（lines 51-60）、各レシピが `bash scripts/launch-agents.sh` を呼ぶ |
-| `README.md` | 多重インスタンス + クレデンシャル分離ガイド | VERIFIED | §複数インスタンス運用節（lines 70-165）に全要素記載確認 |
+| `src/http.rs` | `TurnIdAllocator` struct + `next_turn_id()` + `AppState.turn_id_alloc` + `prompt_handler` 採番置換 + 並行採番テスト + 後退クランプテスト | VERIFIED | `pub struct TurnIdAllocator` (line 46), `pub async fn next_turn_id` (line 96), `pub turn_id_alloc: Arc<TurnIdAllocator>` in AppState (line 146), `state.turn_id_alloc.next_turn_id().await` in prompt_handler (line 192), 4 tests (lines 716, 753, 789, 851) |
+| `src/main.rs` | `TurnIdAllocator` import + `AppState.turn_id_alloc` 配線 | VERIFIED | `use ht_webif::http::{..., TurnIdAllocator}` (line 12), `turn_id_alloc: Arc::new(TurnIdAllocator::new())` in AppState (line 74) |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| `src/main.rs` | `src/turn.rs worker_loop` | `instance_info.clone()` を第4引数で渡す | VERIFIED | `tokio::spawn(worker_loop(worker.clone(), turns_dir.clone(), job_rx, instance_info.clone()))` (main.rs:59-64) |
-| `src/http.rs info_handler` | `AppState.instance_info` | lock-free atomic read（worker.lock() 呼ばない） | VERIFIED | `info_handler` body に `state.instance_info` への直接アクセスのみ。`worker.lock()` の呼び出しなし（grep 確認済み） |
-| `scripts/launch-agents.sh up` | `GET /info` | agent 名一致ポーリング | VERIFIED | `check_info_agent` 関数が `curl /info` → `json_get_field "agent"` → expected と比較（lines 69-87, 226） |
-| `scripts/launch-agents.sh` | `instances.conf` | 行読み込み + extra-env を spawn 時 export | VERIFIED | `while IFS= read -r line ... done < "$INSTANCES_CONF"` + `read -ra fields` + `export "$kv"` (eval なし) |
-| `src/http.rs prompt_handler` | `AppState.instance_info.in_flight` | send 成功後に fetch_add(1) | VERIFIED | `state.instance_info.in_flight.fetch_add(1, Ordering::Relaxed)` (http.rs:119-124, WR-03 fix) |
-| `src/turn.rs worker_loop` | `AppState.instance_info.in_flight` | process_job 後に fetch_sub(1) | VERIFIED | `instance_info.in_flight.fetch_sub(1, Ordering::Relaxed)` (turn.rs:111, WR-03 fix) |
+| `src/http.rs prompt_handler` | `AppState.turn_id_alloc` | `state.turn_id_alloc.next_turn_id().await` (line 192) | VERIFIED | worker.lock() not called in prompt_handler (confirmed by grep: lines 287, 315 belong to command_handler and restart_handler) |
+| `src/main.rs` | `AppState.turn_id_alloc` | `Arc::new(TurnIdAllocator::new())` (line 74) | VERIFIED | Import on line 12, construction on line 74 |
 
-### Data-Flow Trace (Level 4)
-
-| Artifact | Data Variable | Source | Produces Real Data | Status |
-|----------|---------------|--------|--------------------|--------|
-| `info_handler` | `info.agent_name`, `info.port`, `info.in_flight`, `info.started_at`, `info.turns_processed` | `Arc<InstanceInfo>` — 起動時に `main.rs` で構築、worker_loop がアトミック更新 | Yes — atomic reads of real runtime state | FLOWING |
-| `worker_loop` | `instance_info.in_flight`, `instance_info.is_busy`, `instance_info.turns_processed` | `process_job` 呼び出し結果に基づき store/fetch_sub/fetch_add | Yes — actual job completion counts | FLOWING |
-
-### Behavioral Spot-Checks
+### Behavioral Spot-Checks (06-04 scope)
 
 | Behavior | Command | Result | Status |
 |----------|---------|--------|--------|
-| 34テスト全件グリーン（/info テスト含む） | `cargo test --release` | 34 passed, 0 failed | PASS |
-| bash構文チェック | `bash -n scripts/launch-agents.sh` | exit 0, no output | PASS |
-| launcher 実行ビット | `test -x scripts/launch-agents.sh` | executable | PASS |
-| info_handler に worker.lock() なし | `awk '/^async fn info_handler/,/^}/' src/http.rs \| grep worker.lock` | 出力なし | PASS |
-| load_port 二重呼び出しなし | `grep -n "load_port" src/main.rs` | 1 call (line 35) only | PASS |
-| eval 不使用確認 | `grep "eval" scripts/launch-agents.sh` | コメント行のみ（実 eval コードなし） | PASS |
-| デットマーカーなし | `grep -rn "TBD\|FIXME\|XXX"` on phase files | 出力なし | PASS |
+| 全38テストグリーン（新規4テスト含む） | `cargo test` | 38 passed, 0 failed, finished in 1.02s | PASS |
+| `cargo fmt --check` 差分なし | `cargo fmt --check` | exit 0, FMT_CLEAN | PASS |
+| `cargo clippy -- -D warnings` 警告なし | `cargo clippy -- -D warnings` | Finished, 0 warnings | PASS |
+| N=1000 並行採番一意性（multi_thread, 4 workers） | test `turn_id_allocator_concurrent_uniqueness_n1000` | passed | PASS |
+| 全採番結果が `^[0-9-]+$` を満たす | test `turn_id_allocator_all_ids_pass_whitelist` | passed | PASS |
+| サフィックス付き ID が `<base>-NNN` 形式（決定論的） | test `turn_id_allocator_suffix_segment_is_three_digit_numeric` | passed | PASS |
+| 壁時計後退時に過去 turnId を再発番しない | test `turn_id_allocator_clamps_on_backward_clock_no_bare_reemit` | passed | PASS |
+| prompt_handler が worker Mutex を取得しない | test `prompt_handler_returns_turn_id_immediately_while_worker_mutex_is_held` | passed | PASS |
+
+### CR-01 (Code Review Finding) — Backward-Clock Clamp Verification
+
+The code review (06-04-REVIEW.md) identified that the original `base != last_base` condition
+allowed NTP clock regression to re-emit a previously-issued bare turnId. The fix required
+changing to `base > last_base` (strictly-greater monotonic check).
+
+**Verified at src/http.rs:100:**
+```rust
+if base > s.last_base {          // CORRECT: strictly greater → new base, seq reset
+    s.last_base = base.clone();
+    s.seq = 0;
+    base
+} else {
+    // same-ms OR backward clock: clamp to last_base, increment seq
+    s.seq = s.seq.checked_add(1).expect(...);
+    format!("{}-{:03}", s.last_base, s.seq)
+}
+```
+
+The condition is `base > s.last_base` — not `base != s.last_base`. Both `==` (same-ms) and
+`<` (backward clock) fall into the `else` branch. The `with_seed("29991231-235959-999", 0)`
+regression test forces all 50 sequential calls into the clamp path and asserts every result
+is lexicographically greater than the seed (i.e., no bare re-emission of the seed itself).
+
+### WR-01 (u32 Overflow) Verification
+
+`s.seq = s.seq.checked_add(1).expect(...)` at line 112. Silent release-mode wrap is
+impossible; overflow panics with a Japanese-language message. VERIFIED.
+
+### WR-02 (Test 3 determinism) Verification
+
+Test 3 (`turn_id_allocator_suffix_segment_is_three_digit_numeric`) now seeds `last_base =
+"29991231-235959-999"` via `TurnIdAllocator::with_seed`, ensuring all N=1000 calls fall into
+the clamp path. `assert!(!suffixed.is_empty())` prevents no-op pass. VERIFIED.
+
+### WR-03 (multi_thread flavor) Verification
+
+Tests 1 and 2 annotated with `#[tokio::test(flavor = "multi_thread", worker_threads = 4)]`,
+exercising genuine OS-thread Mutex contention rather than cooperative single-thread
+interleaving. VERIFIED.
 
 ### Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
 |-------------|------------|-------------|--------|----------|
-| PARA-01 | Plan 01 | `GET /info` がエージェント名・port・status を JSON で返す | SATISFIED | `info_handler` + `/info` ルート実装済み。5フィールド（agent/port/status/uptime_secs/turns_processed）返却確認 |
-| PARA-02 | Plan 01 | `/info` が uptime・処理ターン数を含む | SATISFIED | `uptime_secs: info.started_at.elapsed().as_secs()` + `turns_processed: info.turns_processed.load()` 実装確認 |
-| PARA-03 | Plan 02 | launcher で複数インスタンス一括起動、`/info` ポーリングで起動確認 | SATISFIED (code) | `scripts/launch-agents.sh up` + `check_info_agent` 実装確認。実動作は human 検証 |
-| PARA-04 | Plans 02+03 | PORT/TURNS_DIR 分離で並列動作、Codex credential 分離手順をドキュメント化 | SATISFIED | TURNS_DIR per-port 分離（spawn 行確認）、README §クレデンシャル分離ガイド（CODEX_HOME 手順付き）確認 |
+| PARA-01 | Plan 01 | `GET /info` がエージェント名・port・status を JSON で返す | SATISFIED | 初回検証から変更なし |
+| PARA-02 | Plan 01 | `/info` が uptime・処理ターン数を含む | SATISFIED | 初回検証から変更なし |
+| PARA-03 | Plan 02, 04 | launcher で複数インスタンス一括起動＋turnId コリジョン防止 | SATISFIED (code) | launch-agents.sh 実装確認（初回）+ TurnIdAllocator による同一インスタンス内 turnId 一意性（06-04）。実動作は human 検証 |
+| PARA-04 | Plans 02+03 | PORT/TURNS_DIR 分離で並列動作、Codex credential 分離ドキュメント | SATISFIED | 初回検証から変更なし |
 
 ### Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| (none found) | — | — | — | — |
+| (none found in 06-04 modified files) | — | — | — | — |
 
-No TBD/FIXME/XXX debt markers found. No stub return patterns. No placeholder implementations.
-
-### Review Findings Status (06-REVIEW.md + 06-REVIEW-FIX.md)
-
-All 7 in-scope findings (CR-01 + WR-01..06) were fixed per 06-REVIEW-FIX.md. Commits verified in git log (379eb68..72909b1):
-
-| Finding | Fix | Commit | Verified |
-|---------|-----|--------|---------|
-| CR-01: cargo run wrapper PID orphan | prebuilt binary spawn | 379eb68 | VERIFIED — `nohup ... "$server_bin"` (no cargo run) |
-| WR-01: TURNS_DIR display mismatch | turns_dir = turns-${port}/${agent} | 1f0be1e | VERIFIED — line 138/361 in launcher |
-| WR-02: space-containing env values split | array parse `read -ra fields` | f4749ae | VERIFIED — line 123/127 |
-| WR-03: is_busy dequeue blind spot | in_flight AtomicU64 | 07aa30c | VERIFIED — in_flight in InstanceInfo, prompt_handler +1, worker_loop -1 |
-| WR-04: exit 1 aborts whole up loop | failures counter + continue | e839e30 | VERIFIED — lines 109, 201, 220, 236, 260 |
-| WR-05: non-numeric PID files | `=~ ^[0-9]+$` validation | 34845dd | VERIFIED — lines 148, 303, 373 |
-| WR-06: port collision misdiagnosed | tri-state return (0/1/2) | 72909b1 | VERIFIED — return 2 + check_rc -eq 2 |
-
-Info findings IN-01..03 were intentionally out of scope (advisory quality improvements, not correctness blockers).
+Debt-marker scan on `src/http.rs` and `src/main.rs`: no TBD/FIXME/XXX markers found.
 
 ### Human Verification Required
+
+The UAT Test 2 gap (same-instance turnId collision) is now CLOSED in code and verified by
+automated tests. The two remaining human verification items are carried forward from the
+initial verification — they are unaffected by 06-04:
 
 #### 1. 複数インスタンス同時起動と /info エージェント名確認
 
 **Test:** `just up-all` を実行し、起動後に各ポートへ `curl -s localhost:808{0,1,2}/info | jq .agent` を実行する
-**Expected:** `"claude"`, `"codex"`, `"opencode"` がそれぞれ返る（エージェント名が正しく分離されている）
-**Why human:** ht-mcp + claude/codex/opencode の実バイナリが必要。instances.conf の3エージェントが全部 PATH 上にある必要がある
+**Expected:** `"claude"`, `"codex"`, `"opencode"` がそれぞれ返る
+**Why human:** ht-mcp + claude/codex/opencode の実バイナリが必要。UAT Test 1 で claude と opencode は確認済み。codex は CODEX_HOME 設定後に確認必要
 
-#### 2. ターンファイルコリジョン非発生確認
-
-**Test:** 2インスタンス（例: claude:8080, codex:8081）を同時起動し、各インスタンスへ複数ターンを並行投入する（例: 各50ターン）
-**Expected:** `turns-8080/claude/` と `turns-8081/codex/` のファイルが互いに干渉しない。各ディレクトリのファイル数が投入数と一致する
-**Why human:** 実際のマルチプロセス書き込みが必要。TURNS_DIR 分離の効果は実行時のみ観測可能
-
-#### 3. /info の busy セマンティクス確認（WR-03 変更後）
+#### 2. /info の busy セマンティクス確認（WR-03 変更後）
 
 **Test:** `POST /prompt {"prompt":"..."}` 投入直後（worker がまだデキューしていないタイミング）に `GET /info` を呼ぶ
 **Expected:** `status: "busy"` が返る（in_flight = 1 のため）。ターン完了後に `status: "idle"` に戻る
-**Why human:** WR-03 で `status` の判定が `is_busy`（デキュー時トグル）から `in_flight > 0`（キュー投入時インクリメント）に変更された。この変更がスケジューラ/ロードバランサとして期待する契約と一致するか運用者の確認が必要
+**Why human:** WR-03 で `status` の判定が `is_busy`（デキュー時）から `in_flight > 0`（キュー投入時）に変更。この変更がロードバランサとして期待する契約と一致するか運用者の確認が必要。UAT Test 3 で確認済みだが、運用者の明示的承認が記録されていない
 
 ### Gaps Summary
 
-No technical gaps found. All 4 success criteria are implemented in code with substantive, wired, and data-flowing artifacts. The `human_needed` status reflects 3 runtime behaviors that require real agent binaries to verify:
+No technical gaps. The 06-04 gap (UAT Test 2: same-instance turnId collision) is fully
+closed:
 
-1. Actual multi-instance startup and /info agent name isolation (PARA-03)
-2. Turn file collision non-occurrence at runtime (success criterion 3)
-3. Confirmation that the WR-03 semantic change (in_flight-based busy) matches intended load-balancer contract
+- `TurnIdAllocator` exists, is substantive, is wired into `AppState` and `prompt_handler`,
+  and data flows through it for every `POST /prompt`
+- The backward-clock clamp (CR-01 review finding) is implemented with the correct `base >
+  s.last_base` condition (strictly-greater), not the weaker `!=` condition
+- All code-review findings (CR-01, WR-01, WR-02, WR-03) are resolved per 06-04-REVIEW.md
+  frontmatter (`status: clean`, `resolved_in: 6bf2f98`)
+- 38/38 tests pass including 4 new TurnIdAllocator regression tests and all pre-existing tests
+- `cargo fmt --check` clean, `cargo clippy -- -D warnings` 0 warnings
+
+The `human_needed` status reflects 2 runtime behaviors that require real agent binaries or
+operator judgment — not any code deficiency.
 
 ---
 
-_Verified: 2026-06-15T08:20:00Z_
+_Verified: 2026-06-15T09:42:00Z_
 _Verifier: Claude (gsd-verifier)_
+_Re-verification: Yes — 06-04 gap closure_
