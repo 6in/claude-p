@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 Phase: 06 (multi-instance-parallel-foundation) — EXECUTING
 Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-06-15
+Last activity: 2026-06-15 - Completed quick task 260615-t7k: ht-webif portable PATH-installable launcher
 
 Progress: [██████████] 100%
 
@@ -273,6 +273,12 @@ None yet.
 
 - Phase 5 is empirically gated: Codex CLI and OpenCode must be installed and authenticated on the host before Phase 5 can be validated. Codex needs `--yolo` trust-dialog suppression confirmed; OpenCode needs `opencode auth login` run beforehand.
 - Phase 5 output covenant compliance is MEDIUM confidence for non-Claude models (GPT-4o/o3 may not reliably follow the file-write instruction — must be tested).
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260615-t7k | ht-webif を PATH 配布可能なポータブルツール化（agents 探索 precedence + cwd 基準 instances.conf + `just install` + docs） | 2026-06-15 | c6eda7a | [260615-t7k-make-ht-webif-a-portable-path-installabl](./quick/260615-t7k-make-ht-webif-a-portable-path-installabl/) |
 
 ## Deferred Items
 
