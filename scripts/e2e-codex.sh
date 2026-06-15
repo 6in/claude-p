@@ -160,10 +160,10 @@ result1=$(echo "$response1" | jq -r '.result // ""')
 turn_id1=$(echo "$response1" | jq -r '.turn_id // "unknown"')
 
 log "段階 1 結果: turnId=${turn_id1}, status=${status1}, 所要時間=${T1_ELAPSED}s"
-log "段階 1 result 先頭 100 文字: $(echo "$result1" | head -c 100)"
+log "段階 1 result 先頭 100 文字: ${result1:0:100}"
 
 if [[ "$status1" == "timeout" ]] || [[ "$status1" == "failed" ]]; then
-    log "ERROR: 段階 1 失敗 (status=${status1}) — result: $(echo "$result1" | head -c 200)"
+    log "ERROR: 段階 1 失敗 (status=${status1}) — result: ${result1:0:200}"
     exit 1
 fi
 if [[ -z "$result1" ]]; then
@@ -229,10 +229,10 @@ result3=$(echo "$response3" | jq -r '.result // ""')
 turn_id3=$(echo "$response3" | jq -r '.turn_id // "unknown"')
 
 log "段階 3 結果: turnId=${turn_id3}, status=${status3}, 所要時間=${T3_ELAPSED}s"
-log "段階 3 result 先頭 100 文字: $(echo "$result3" | head -c 100)"
+log "段階 3 result 先頭 100 文字: ${result3:0:100}"
 
 if [[ "$status3" == "timeout" ]] || [[ "$status3" == "failed" ]]; then
-    log "ERROR: 段階 3 失敗 (status=${status3}) — result: $(echo "$result3" | head -c 200)"
+    log "ERROR: 段階 3 失敗 (status=${status3}) — result: ${result3:0:200}"
     exit 1
 fi
 
@@ -252,7 +252,7 @@ fi
 if echo "$result3" | grep -q "7331"; then
     log "ERROR: 履歴隔離失敗 — fresh:true かつファイル検索禁止でも前ターンの秘密数値 7331 が漏れている"
     log "  これは真の会話履歴漏洩を示す（ファイル検索ではない）"
-    log "  result3: $(echo "$result3" | head -c 300)"
+    log "  result3: ${result3:0:300}"
     exit 1
 fi
 
@@ -260,7 +260,7 @@ fi
 # ファイル検索禁止制約下で会話記憶がなければ UNKNOWN を返すはず（INFO ではなく必須化）
 if ! echo "$result3" | grep -qi "UNKNOWN"; then
     log "ERROR: 段階 3 失敗 — result に UNKNOWN が含まれない（回答の意味論が不明）"
-    log "  result3: $(echo "$result3" | head -c 300)"
+    log "  result3: ${result3:0:300}"
     exit 1
 fi
 

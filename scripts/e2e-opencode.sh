@@ -172,11 +172,11 @@ result1=$(echo "$response1" | jq -r '.result // ""')
 turn_id1=$(echo "$response1" | jq -r '.turn_id // "unknown"')
 
 log "段階 1 結果: turnId=${turn_id1}, status=${status1}, 所要時間=${T1_ELAPSED}s"
-log "段階 1 result 先頭 100 文字: $(echo "$result1" | head -c 100)"
+log "段階 1 result 先頭 100 文字: ${result1:0:100}"
 
 # WR-01: status=done allowlist — status が done 以外はすべて失敗（unknown/timeout/failed を含む）
 if [[ "$status1" != "done" ]]; then
-    log "ERROR: 段階 1 失敗 (status=${status1}, 期待値 done) — result: $(echo "$result1" | head -c 200)"
+    log "ERROR: 段階 1 失敗 (status=${status1}, 期待値 done) — result: ${result1:0:200}"
     exit 1
 fi
 if [[ -z "$result1" ]]; then
@@ -237,7 +237,7 @@ result25=$(echo "$response25" | jq -r '.result // ""')
 turn_id25=$(echo "$response25" | jq -r '.turn_id // "unknown"')
 
 log "段階 2.5 結果: turnId=${turn_id25}, status=${status25}, 所要時間=${T25_ELAPSED}s"
-log "段階 2.5 result 先頭 100 文字: $(echo "$result25" | head -c 100)"
+log "段階 2.5 result 先頭 100 文字: ${result25:0:100}"
 
 # WR-01: status=done allowlist
 if [[ "$status25" != "done" ]]; then
@@ -305,11 +305,11 @@ result3=$(echo "$response3" | jq -r '.result // ""')
 turn_id3=$(echo "$response3" | jq -r '.turn_id // "unknown"')
 
 log "段階 3 結果: turnId=${turn_id3}, status=${status3}, 所要時間=${T3_ELAPSED}s"
-log "段階 3 result 先頭 100 文字: $(echo "$result3" | head -c 100)"
+log "段階 3 result 先頭 100 文字: ${result3:0:100}"
 
 # WR-01: status=done allowlist
 if [[ "$status3" != "done" ]]; then
-    log "ERROR: 段階 3 失敗 (status=${status3}, 期待値 done) — result: $(echo "$result3" | head -c 200)"
+    log "ERROR: 段階 3 失敗 (status=${status3}, 期待値 done) — result: ${result3:0:200}"
     exit 1
 fi
 
@@ -323,7 +323,7 @@ fi
 # ファイル検索禁止制約下で会話記憶がなければ UNKNOWN を返すはず
 if ! echo "$result3" | grep -qi "UNKNOWN"; then
     log "ERROR: 段階 3 失敗 — result に UNKNOWN が含まれない（回答の意味論が不明）"
-    log "  result3: $(echo "$result3" | head -c 300)"
+    log "  result3: ${result3:0:300}"
     exit 1
 fi
 
@@ -331,7 +331,7 @@ fi
 if echo "$result3" | grep -q "7331"; then
     log "ERROR: 段階 3 失敗 — fresh:true かつファイル検索禁止でも前ターンの秘密数値 7331 が漏れている"
     log "  これは respawn によるプロセス再起動が機能していない可能性を示す"
-    log "  result3: $(echo "$result3" | head -c 300)"
+    log "  result3: ${result3:0:300}"
     exit 1
 fi
 
