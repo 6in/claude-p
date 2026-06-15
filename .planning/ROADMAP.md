@@ -24,7 +24,7 @@
 
 - [x] **Phase 4: Agent Profile Abstraction** - Claude を最初のプロファイルとして再定義する純粋リファクタ（挙動変化なし） (completed 2026-06-11)
 - [x] **Phase 5: Codex CLI and OpenCode Validation** - Codex / OpenCode の実機 E2E 検証とプロファイル確立 (completed 2026-06-15)
-- [ ] **Phase 6: Multi-Instance Parallel Foundation** - 観測性エンドポイントと多重インスタンス並列起動の土台
+- [x] **Phase 6: Multi-Instance Parallel Foundation** - 観測性エンドポイントと多重インスタンス並列起動の土台 (completed 2026-06-15)
 
 ## Phase Details
 
@@ -104,7 +104,7 @@
 
 **Wave 3** *(blocked on Wave 2 — launcher コマンドを文書化)*
 
-- [ ] 06-03-PLAN.md — README 多重インスタンス起動手順 + CODEX_HOME 分離 + クレデンシャル分離ガイド（PARA-04）
+- [x] 06-03-PLAN.md — README 多重インスタンス起動手順 + CODEX_HOME 分離 + クレデンシャル分離ガイド（PARA-04）
 
 ## Progress
 
@@ -115,7 +115,7 @@
 | 3. Testing & CI Automation | v1.0 | 6/6 | Complete | 2026-05-25 |
 | 4. Agent Profile Abstraction | v2.0 | 4/4 | Complete    | 2026-06-11 |
 | 5. Codex CLI and OpenCode Validation | v2.0 | 3/3 | Complete    | 2026-06-15 |
-| 6. Multi-Instance Parallel Foundation | v2.0 | 2/3 | In Progress|  |
+| 6. Multi-Instance Parallel Foundation | v2.0 | 3/3 | Complete   | 2026-06-15 |
 
 ---
 *Roadmap created: 2026-05-23*
