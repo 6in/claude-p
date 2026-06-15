@@ -9,17 +9,18 @@
 # per-instance 規約（claude-p 準拠）:
 #   PID:      /tmp/ht-webif-${PORT}.pid
 #   LOG:      /tmp/ht-webif-${PORT}.log
-#   TURNS:    ${WEBIF_DIR}/turns-${PORT}/${AGENT}/
+#   TURNS:    $(pwd)/turns-${PORT}/${AGENT}/
 #             （WR-01: サーバは TURNS_DIR=turns-${PORT} に D-16 の <agent>/ を付与して
 #              turns-${PORT}/${AGENT}/ に書き込む。ポート分離は launcher が注入する
 #              turns-${PORT} の差で成立し、<agent>/ は D-16 が付ける実効サブディレクトリ。）
+#
+# D-03: instances.conf は $(pwd)/instances.conf のみから読む。
+# PATH から ht-webif を発見する（D-04）。`just install` でインストール済みであること。
 
 set -euo pipefail
 
-# --- パス定数 ---
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WEBIF_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-INSTANCES_CONF="${WEBIF_DIR}/instances.conf"
+# --- パス定数（D-03: cwd 基準） ---
+INSTANCES_CONF="$(pwd)/instances.conf"
 
 # --- ログヘルパー ---
 log() {
@@ -90,19 +91,14 @@ check_info_agent() {
 cmd_up() {
     log "instances.conf からインスタンスを起動します: ${INSTANCES_CONF}"
 
-    # CR-01: cargo run ラッパーではなくビルド済みバイナリを直接起動するため、
-    # ループ前に一度だけリリースビルドする。これにより $! が実サーバの PID になり、
-    # down-all の SIGTERM が cargo ラッパーではなく ht-webif 本体に届く。
-    local server_bin="${WEBIF_DIR}/target/release/ht-webif"
-    log "リリースビルド中: ${server_bin}"
-    if ! (cd "$WEBIF_DIR" && cargo build --release) >&2; then
-        log "ERROR: cargo build --release に失敗しました"
+    # D-04: PATH から ht-webif を発見する（cargo build は不要）。
+    # `just install` で ~/.local/bin に配置済みであること。
+    local server_bin
+    server_bin="$(command -v ht-webif)" || {
+        log "ERROR: ht-webif が PATH にありません。just install を実行してください"
         exit 1
-    fi
-    if [[ ! -x "$server_bin" ]]; then
-        log "ERROR: ビルド済みバイナリが見つかりません: ${server_bin}"
-        exit 1
-    fi
+    }
+    log "ht-webif を発見: ${server_bin}"
 
     # WR-04: インスタンス単位の失敗を集計し、ループは中断せず最後にまとめて非ゼロ終了する。
     # これで「起動できるインスタンスは起動し、失敗したものだけ報告する」挙動になる。
@@ -134,8 +130,8 @@ cmd_up() {
         local pid_file="/tmp/ht-webif-${port}.pid"
         local log_file="/tmp/ht-webif-${port}.log"
         # WR-01: サーバは TURNS_DIR(=turns-${port}) に D-16 の <agent>/ を付与する。
-        # 表示・報告には実効パス turns-${port}/${agent} を使う。
-        local turns_dir="${WEBIF_DIR}/turns-${port}/${agent}"
+        # 表示・報告には実効パス turns-${port}/${agent} を使う（cwd 基準）。
+        local turns_dir="$(pwd)/turns-${port}/${agent}"
 
         log "起動中: agent=${agent} port=${port} turns_dir=${turns_dir}"
 
@@ -162,8 +158,8 @@ cmd_up() {
         # サーバの実効パス turns-${port}/${agent} とずれるため、ここでは作らない。
 
         # extra_env を export した上でデーモン spawn（T-06-03: eval 不使用、export で逐次適用）
+        # D-03: ユーザの cwd を維持する（cd しない）。TURNS_DIR は絶対パスで明示する。
         (
-            cd "$WEBIF_DIR"
             # extra_kvs の各 KEY=VALUE を export する（eval なし、トークン境界保持）
             for kv in "${extra_kvs[@]}"; do
                 [[ -z "$kv" ]] && continue
@@ -174,10 +170,10 @@ cmd_up() {
                     log "WARN: 不正な env トークンをスキップします: ${kv}"
                 fi
             done
-            # CR-01: ビルド済みバイナリを直接 spawn する（cargo run ラッパーを挟まない）。
+            # D-04: PATH から発見したバイナリを直接 spawn する（cargo run ラッパーを挟まない）。
             # $! は ht-webif 本体の PID になり、down-all の SIGTERM/SIGKILL が確実に届く。
-            # TURNS_DIR を turns-${port} として spawn（D-16: ポート別 turns ディレクトリ分離）。
-            nohup env PORT="${port}" TURNS_DIR="${WEBIF_DIR}/turns-${port}" AGENT="${agent}" \
+            # TURNS_DIR を cwd 基準の絶対パスで注入（D-16: ポート別 turns ディレクトリ分離）。
+            nohup env PORT="${port}" TURNS_DIR="$(pwd)/turns-${port}" AGENT="${agent}" \
                 "$server_bin" >"${log_file}" 2>&1 &
             local pid=$!
             echo "$pid" > "${pid_file}"
@@ -357,8 +353,8 @@ cmd_status() {
 
         local pid_file="/tmp/ht-webif-${port}.pid"
         local log_file="/tmp/ht-webif-${port}.log"
-        # WR-01: サーバの実効書き込み先は turns-${port}/${agent}（D-16）。
-        local turns_dir="${WEBIF_DIR}/turns-${port}/${agent}"
+        # WR-01: サーバの実効書き込み先は turns-${port}/${agent}（D-16）。cwd 基準で表示。
+        local turns_dir="$(pwd)/turns-${port}/${agent}"
 
         echo "=== agent=${agent} port=${port} ==="
         echo "  TURNS_DIR: ${turns_dir}"
