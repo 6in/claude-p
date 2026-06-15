@@ -64,29 +64,55 @@ impl TurnIdAllocator {
         }
     }
 
+    /// テスト専用: last_base / seq を任意値に先取り（seed）してアロケータを構築する。
+    /// CR-01 のクランプ（後退時刻）や WR-02 の同一 base 衝突を決定論的に再現するために使う。
+    #[cfg(test)]
+    pub fn with_seed(last_base: &str, seq: u32) -> Self {
+        Self {
+            state: Mutex::new(TurnIdAllocatorState {
+                last_base: last_base.to_string(),
+                seq,
+            }),
+        }
+    }
+
     /// HT-PROTOCOL §3.2: 一意な turnId を発番して返す。
     ///
-    /// - 新しい base（現在ミリ秒タイムスタンプ）が前回と異なる場合: seq をリセットし
-    ///   base をそのまま返す（既存形式と後方互換。サフィックス無し）。
-    /// - base が前回と同一の場合（同一ミリ秒の並行採番）: seq を単調増加させ
-    ///   `{base}-{seq:03}` を返す（例: `20260615-090456-080-001`）。
+    /// 不変条件は「発番ベースは単調非減少」である。`YYYYMMDD-HHMMSS-mmm` は固定幅
+    /// なので辞書順比較が時系列順と一致する。これを利用して:
     ///
-    /// サフィックスはハイフンと 3 桁ゼロ埋め数値のみで構成され、
-    /// http.rs の `^[0-9-]+$` ホワイトリストを満たす（英字を含まない）。
+    /// - 新しく整形した base が前回より厳密に大きい場合（時計が前進）: それを採用し
+    ///   seq をリセットして base をそのまま返す（既存形式と後方互換。サフィックス無し）。
+    /// - それ以外（同一ミリ秒、または壁時計が後退した場合 — NTP 補正・VM 再開・うるう秒
+    ///   平滑化等）: last_base に張り付けて（後退した壁時計値へ戻さない）seq を進め、
+    ///   `{last_base}-{seq:03}` を返す。これにより `Utc::now()` が単調でなくても
+    ///   turnId は単調かつ一意になり、過去の turnId 再発番（ファイル上書き・データ損失）を防ぐ。
+    ///
+    /// サフィックスはハイフンと最小 3 桁ゼロ埋め数値のみで構成される（衝突が 999 を
+    /// 超えた場合は 4 桁以上に伸長するが、いずれも英字を含まず http.rs の `^[0-9-]+$`
+    /// ホワイトリストを満たす）。
     ///
     /// ロックはこの整形処理の間だけ保持し、ファイル I/O や他の `.await` を跨がない。
     pub async fn next_turn_id(&self) -> String {
         let base = chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f").to_string();
         let mut s = self.state.lock().await;
-        if base != s.last_base {
-            // 新しい base: seq をリセットし base をそのまま返す（サフィックス無し）
+        // 単調非減少クランプ: 固定幅形式ゆえ辞書順 = 時系列順。
+        if base > s.last_base {
+            // 時計が前進: 新 base を採用し seq リセット、サフィックス無しで後方互換
             s.last_base = base.clone();
             s.seq = 0;
             base
         } else {
-            // 同一 base（同一ミリ秒の衝突）: seq を単調増加させ連番サフィックスを付与
-            s.seq += 1;
-            format!("{base}-{:03}", s.seq)
+            // 同一 ms または時計が後退（NTP 補正等）: 直前 base を維持し連番を進める。
+            // 壁時計が後退しても last_base を維持し seq を進めることで過去の turnId
+            // 再発番を防ぐ（単調非減少クランプ）。
+            // WR-01: u32 オーバーフローを checked_add で検知する。同一 base に u32::MAX
+            // 件連番が張り付くのは天文学的に非現実的だが、release で無音ラップ・debug で
+            // panic するのを避け、溢れた場合は明示的に panic させて異常を可視化する。
+            s.seq = s.seq.checked_add(1).expect(
+                "turnId seq が u32 を溢れた（同一 base への連番が異常: 壁時計が長時間停滞）",
+            );
+            format!("{}-{:03}", s.last_base, s.seq)
         }
     }
 }
@@ -685,7 +711,8 @@ mod tests {
     // HT-PROTOCOL §3.2: 同一ミリ秒に N 並行 POST /prompt しても turnId が全件一意。
     // 1000 タスクを tokio::spawn で並行起動し、全件収集して HashSet で重複を検査する。
     // これは同一プロセス内の同一ミリ秒並行採番衝突を直接再現・防止する回帰テスト。
-    #[tokio::test]
+    // WR-03: multi_thread ランタイムで真の並列競合（Mutex 競合）を再現する。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn turn_id_allocator_concurrent_uniqueness_n1000() {
         use std::collections::HashSet;
 
@@ -721,7 +748,8 @@ mod tests {
     // http.rs:152 の `c.is_ascii_digit() || c == '-'` ホワイトリストへの適合を検証する。
     // サフィックス付き（...-080-001）も無し（...-080）も両方このルールを満たすこと。
     // 英字（e.g. -w02）を含む形式は whitelist で弾かれるため使用禁止であることの保証。
-    #[tokio::test]
+    // WR-03: multi_thread ランタイムで真の並列競合を再現する。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn turn_id_allocator_all_ids_pass_whitelist() {
         use std::collections::HashSet;
 
@@ -752,15 +780,19 @@ mod tests {
 
     // ── 連番サフィックス形式(Test 3): 同一 base の 2 件目以降が <base>-NNN 形式 ──
     //
-    // 同一 base を強制するため、alloc.state.last_base を事前に現在タイムスタンプで
-    // 「先取り」して seq をリセットし、次の next_turn_id() 呼び出しが必ず衝突するよう誘導する。
-    // ただし内部状態は非公開のため、N=1000 並行結果からサフィックス付きエントリを抽出し、
-    // 4 セグメント目（ハイフン区切り）が 3 桁数字のみであることを確認する。
+    // WR-02: 以前は N=1000 並行結果からサフィックス付きエントリを抽出していたが、全件が
+    // 別ミリ秒に着地すると suffixed が空になり何も検証しない（タイミング依存の no-op）に
+    // なりうる。ここでは with_seed で last_base を未来の固定タイムスタンプに先取りし、
+    // 後続の next_turn_id() が必ずクランプ経路（同一/後退 base）に入って連番サフィックスを
+    // 付けることを決定論的に保証する。
     #[tokio::test]
     async fn turn_id_allocator_suffix_segment_is_three_digit_numeric() {
         use std::collections::HashSet;
 
-        let alloc = Arc::new(TurnIdAllocator::new());
+        // 未来のタイムスタンプを先取りすることで、現在時刻からの base は必ず last_base 以下に
+        // なり、すべての発番がクランプ経路（サフィックス付き）を通る。
+        let seed = "29991231-235959-999";
+        let alloc = Arc::new(TurnIdAllocator::with_seed(seed, 0));
         let n: usize = 1000;
 
         let handles: Vec<_> = (0..n)
@@ -777,21 +809,79 @@ mod tests {
 
         let unique: HashSet<_> = ids.into_iter().collect();
 
-        // サフィックス付きエントリ（セグメント数 4 = YYYYMMDD-HHMMSS-mmm-NNN）を抽出して検証
+        // 全件一意であること（クランプ経路でも seq により一意）。
+        assert_eq!(
+            unique.len(),
+            n,
+            "クランプ経路でも turnId は全件一意であること: 重複 {} 件",
+            n - unique.len()
+        );
+
+        // サフィックス付きエントリ（セグメント数 4 = YYYYMMDD-HHMMSS-mmm-NNN）を抽出して検証。
+        // 先取りにより全件がサフィックス付きになるはずなので、空でないことを保証する（WR-02）。
         let suffixed: Vec<_> = unique
             .iter()
             .filter(|id| id.split('-').count() == 4)
             .collect();
+        assert!(
+            !suffixed.is_empty(),
+            "先取りシードにより少なくとも 1 件はサフィックス付きであるべき（WR-02: no-op 防止）"
+        );
 
-        // N=1000 の並行採番では同一ミリ秒衝突が高確率で発生するはずだが、
-        // 万一全件異なるミリ秒に着地した場合はサフィックス付きエントリが存在しない可能性がある。
-        // その場合はスキップして OK（形式自体は上記 Test 2 で別途保証済み）。
-        for id in suffixed {
+        for id in &suffixed {
             let segments: Vec<&str> = id.split('-').collect();
             let suffix = segments[3];
+            // IN-01: サフィックスは最小 3 桁ゼロ埋め。衝突が 999 を超えると 4 桁以上に
+            // 伸長する（N=1000 の先取りシードでは seq が 1000 まで進むため 4 桁が出る）。
+            // いずれも数字のみでホワイトリスト適合であることを確認する。
             assert!(
-                suffix.len() == 3 && suffix.chars().all(|c| c.is_ascii_digit()),
-                "turnId '{id}' のサフィックスセグメント '{suffix}' が 3 桁数字形式でない（-NNN 形式であること）"
+                suffix.len() >= 3 && suffix.chars().all(|c| c.is_ascii_digit()),
+                "turnId '{id}' のサフィックスセグメント '{suffix}' が最小 3 桁の数字形式でない（-NNN 形式であること）"
+            );
+        }
+    }
+
+    // ── CR-01 回帰: 壁時計後退時に過去 turnId を再発番しない ──
+    //
+    // last_base を未来の固定タイムスタンプに先取りした状態で next_turn_id() を複数回呼ぶ。
+    // 現在の壁時計はシード値より過去なので、クランプが効いていなければ「bare base 再発番」
+    // が起き last_base より辞書順で小さい ID が返る。クランプが効いていれば全 ID は
+    // last_base に張り付いた連番（last_base より厳密に大きい）になり、かつ全件一意になる。
+    #[tokio::test]
+    async fn turn_id_allocator_clamps_on_backward_clock_no_bare_reemit() {
+        use std::collections::HashSet;
+
+        let seed = "29991231-235959-999";
+        let alloc = TurnIdAllocator::with_seed(seed, 0);
+
+        let mut ids = Vec::new();
+        for _ in 0..50 {
+            ids.push(alloc.next_turn_id().await);
+        }
+
+        // 全件一意であること（bare base 再発番が起きれば重複しうる）。
+        let unique: HashSet<_> = ids.iter().cloned().collect();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "クランプ経路でも全件一意であること"
+        );
+
+        for id in &ids {
+            // bare base 再発番が起きていないこと: すべて last_base にサフィックスが付き、
+            // 辞書順で seed より厳密に大きい（= 過去値へ後退していない）。
+            assert!(
+                id.as_str() > seed,
+                "turnId '{id}' が seed '{seed}' 以下（壁時計後退で過去 base を再発番した疑い）"
+            );
+            assert_eq!(
+                id.split('-').count(),
+                4,
+                "クランプ経路の turnId '{id}' はサフィックス付き（4 セグメント）であるべき"
+            );
+            assert!(
+                id.chars().all(|c| c.is_ascii_digit() || c == '-'),
+                "turnId '{id}' がホワイトリスト ^[0-9-]+$ を満たさない"
             );
         }
     }
