@@ -1,30 +1,45 @@
 ---
 phase: 05-codex-cli-and-opencode-validation
-verified: 2026-06-12T10:20:00Z
-status: gaps_found
-score: 4/5 must-haves verified
+verified: 2026-06-15T01:10:00Z
+status: human_needed
+score: 5/5 must-haves verified
 overrides_applied: 0
-gaps:
-  - truth: "AGENT=opencode で POST /prompt {\"fresh\":true} がセッションリセット方式（respawn）で動作し履歴隔離が成立する (AGNT-04, D-10)"
-    status: partial
-    reason: "opencode-runner.sh の D-09 ラッパーアーキテクチャでは opencode run が呼び出しごとに新しい会話を開始するため、非 fresh ターンも fresh:true ターンも等しく新規コンテキストになる。その結果 e2e-opencode.sh の stage2→stage3 隔離テストは unfalsifiable（常に PASS）であり、fresh_mode=respawn が機能しているかどうかを実際には検証していない。REQUIREMENTS.md の AGNT-04 文面（respawn 方式: セッション kill+再生成）は達成されているが、その達成が意味ある隔離を提供することの検証は vacuous。コードレビュー CR-01 が同一問題を Critical として記録している。"
-    artifacts:
-      - path: "scripts/e2e-opencode.sh"
-        issue: "stage2→stage3 の履歴隔離テストは構造的に unfalsifiable: D-09 アーキテクチャでは全ターンが独立した opencode run 呼び出しになるため、fresh_mode が壊れていても stage3 は常に PASS する"
-      - path: "agents/opencode.toml"
-        issue: "line 53 のコメントが空洞性を自己文書化している: 'opencode run は1ターンで終了するため、respawn で毎ターン新しいコンテキストになる' — これは非 fresh ターン間に会話継続性が存在しないことを意味し、AGNT-04 の検証前提を崩している"
-    missing:
-      - "e2e-opencode.sh の stage 2.5（非 fresh での正の対照実験）: 非 fresh ターンでも 7331 が返らないことを確認し、それをもって継続性が存在しないことを明示的に記録する"
-      - "あるいは: opencode run --continue / --session フラグで非 fresh ターン間の会話継続性を確立し、そのうえで fresh:true の respawn 隔離を検証する（意味ある AGNT-04 テストの前提）"
-      - "あるいは: fresh:true が実際に Worker::recreate() を呼び出したことをサーバログで検証する（respawn 機構の発火証明）"
+re_verification:
+  previous_status: gaps_found
+  previous_score: 4/5
+  gaps_closed:
+    - "AGNT-04 E2E falsifiability: scripts/e2e-opencode.sh now gates on Worker::recreate() log delta == 1 (stage 3) + stage 2.5 positive control + done allowlist (WR-01 in opencode) + UNKNOWN/empty hard gates (WR-02 in opencode)"
+  gaps_remaining: []
+  regressions:
+    - "e2e-codex.sh stages 1 and 2 still use old `== timeout || failed` status gate (not `!= done` allowlist) — WR-01 from initial VERIFICATION was not in scope for 05-03 plan or 05-REVIEW-FIX; does not affect AGNT-04 gap closure"
+human_verification:
+  - test: "Run bash scripts/e2e-opencode.sh on a host with opencode + ht-mcp + GitHub Copilot auth"
+    expected: "Stage 2.5 returns UNKNOWN (no continuity), stage 3 shows recreate_delta == 1 in log and exits 0"
+    why_human: "Requires live opencode agent with real API credentials; cannot be verified programmatically"
+  - test: "Deliberately break fresh_mode=respawn (e.g., set fresh_mode = 'bogus' in agents/opencode.toml) and run bash scripts/e2e-opencode.sh"
+    expected: "Script exits 1 at stage 3 (not at stage 1 or 2) — either status != done (if bogus mode causes a failed turn) or recreate_delta == 0 gate fires"
+    why_human: "Falsifiability proof requires a real run; structural analysis confirms it should FAIL but live execution is the authoritative test"
+  - test: "Verify recreate_delta == 1 is the correct expected delta for a single fresh turn under normal opencode-runner.sh behavior"
+    expected: "ensure_healthy() at turn start sees 'OpenCodeRunner ready' (session healthy), so does NOT call recreate(). Then fresh_mode=respawn calls recreate() once. Delta = 1."
+    why_human: "Depends on runtime readiness-snapshot content — must be confirmed during a live run; if ensure_healthy() ever fires its own recreate(), delta would be 2 and the gate would false-negative"
 ---
 
-# Phase 05: Codex CLI and OpenCode Validation — Verification Report
+# Phase 05: Codex CLI and OpenCode Validation — Verification Report (Re-verification)
 
 **Phase Goal:** Codex CLI と OpenCode を実機で駆動し、ターンファイル方式での結果取得が動作することを E2E で確認できる。
-**Verified:** 2026-06-12T10:20:00Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-06-15T01:10:00Z
+**Status:** human_needed
+**Re-verification:** Yes — after gap closure (05-03 plan + 05-REVIEW-FIX)
+
+## Re-verification Summary
+
+Previous status: `gaps_found` (score 4/5, AGNT-04 vacuous E2E)
+
+Gap closure plan 05-03 + code review fix pass (commits ecc5a30 → d830f63) modified `scripts/e2e-opencode.sh`, `scripts/e2e-codex.sh`, and `scripts/opencode-runner.sh`. This re-verification focuses on the failed AGNT-04 truth and performs regression checks on previously-passed items.
+
+**Gap closed:** AGNT-04 E2E is now structurally falsifiable. The previously-vacuous "7331 non-presence" gate has been replaced by a Worker::recreate() log-delta gate that fails deterministically when the respawn path is broken.
+
+**No regressions found** in previously-verified items (AGNT-01, AGNT-02, AGNT-03, SC5, artifacts).
 
 ## Goal Achievement
 
@@ -32,117 +47,193 @@ gaps:
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | `AGENT=codex ./ht-webif` に POST /prompt を送ると result-<turnId>.txt に非空回答 + status-<turnId>.json に done が書かれる (AGNT-01) | ✓ VERIFIED | 実機 E2E stage1: turnId=20260612-081024-367, result="4", status=done, 26s。scripts/e2e-codex.sh stage1 が result 非空 + status != timeout/failed を確認 |
-| 2 | `AGENT=codex` で POST /prompt {"fresh":true} が /clear 送信方式で動作し履歴隔離が成立する (AGNT-02, D-10) | ✓ VERIFIED | 実機 E2E stage3: turnId=20260612-081119-766, result="UNKNOWN", status=done, 19s。rollout ファイル検査で /clear 後の零履歴を確認。no-search probe 方法論で FALSE POSITIVE 排除済み |
-| 3 | `agents/codex.toml` が ready_pattern=YOLO mode / fresh_mode=command / clear_command=/clear / prerequisite 手順コメントを正確に記述している (SC5) | ✓ VERIFIED | `ready_pattern = "YOLO mode"`, `fresh_mode = "command"`, `clear_command = "/clear"` 存在確認。`# 前提条件:` ブロックに `codex login` を含む。output_covenant に {result_path}/{status_path}、trigger_template に {prompt_path} 含有確認 |
-| 4 | `scripts/e2e-codex.sh` が再実行可能で、result 非空 + status=done + 履歴隔離 2 ターンテストを検証する (D-07, D-10) | ✓ VERIFIED | bash -n 通過。実行ビット +x 確認。AGENT=codex PORT=8081 起動。3段階検証（stage1 result非空+status/stage2 seed/stage3 no-search probe with 7331 grep）。set -euo pipefail + trap cleanup EXIT INT TERM + wait_for_server 含有確認 |
-| 5 | `AGENT=opencode ./ht-webif` で POST /prompt を送ると result-<turnId>.txt に非空回答 + status-<turnId>.json に done が書かれる (AGNT-03) | ✓ VERIFIED | 実機 E2E attempt4 stage1: result="5", status=done, 14s。orchestrator context で確認 |
-| 6 | `AGENT=opencode` で POST /prompt {"fresh":true} がセッションリセット方式（respawn）で動作し履歴隔離が成立する (AGNT-04, D-10) | ✗ PARTIAL | 実機 E2E stage3: result="UNKNOWN", status=done, 19s — しかし D-09 アーキテクチャにより全ターンが独立した opencode run 呼び出しになるため、テストは構造的に unfalsifiable。fresh_mode=respawn が正しく設定され実際に呼び出されることは確認できるが、隔離が機能することの意味ある証明は提供されていない (CR-01) |
-| 7 | `agents/opencode.toml` が trigger_template=/turn {prompt_path}（ASCII のみ）/ ready_pattern=Ask anything / prerequisite 手順コメントを正確に記述している (SC5) | ✓ VERIFIED (deviation) | trigger_template は "opencode run --command turn {prompt_path}"（ASCII のみ確認済み）。ready_pattern は "OpenCodeRunner ready"（D-09 ラッパー方式への移行で変更、SC5 の intent を満たす）。`# 前提条件:` ブロックに opencode auth login と bash scripts/setup-opencode.sh 参照を含む |
-| 8 | `scripts/setup-opencode.sh` が ~/.config/opencode/commands/turn.md を冪等生成する (D-04) | ✓ VERIFIED | bash -n 通過。実行ビット +x。既存時スキップロジック確認。turn.md の description フロントマターと $ARGUMENTS 本文を正確に生成 |
-| 9 | fresh_mode 確定値が実機挙動に基づき決定され、フォールバック時は ROADMAP SC4 と AGNT-04 文面が実測で更新される (D-01/D-02/D-03) | ✓ VERIFIED | /new → respawn フォールバック確定（D-01/D-02）。ROADMAP.md SC4 に「/new はエージェント選択ダイアログのため不採用 — 2026-06-12 実機試行 D-01/D-02 確定」追記確認。REQUIREMENTS.md AGNT-04 同様に更新確認（D-03） |
+| 1 | `AGENT=codex ./ht-webif` に POST /prompt を送ると result 非空 + status=done (AGNT-01) | ✓ VERIFIED (regression) | Prior live E2E confirmed; e2e-codex.sh syntax ok, 33 cargo tests green, no regressions in file |
+| 2 | `AGENT=codex` で fresh:true が /clear 方式で動作し履歴隔離が成立する (AGNT-02) | ✓ VERIFIED (regression) | Stage-3 now has WR-03 hard gates (empty+UNKNOWN). Prior live E2E evidence unchanged. |
+| 3 | `AGENT=opencode ./ht-webif` に POST /prompt を送ると result 非空 + status=done (AGNT-03) | ✓ VERIFIED (regression) | Prior live E2E confirmed; no changes to opencode basic E2E path |
+| 4 | `AGENT=opencode` で fresh:true が respawn 方式で動作し Worker::recreate() 発火をログで証明できる (AGNT-04) | ✓ VERIFIED (static) + ? HUMAN | grep -cF pattern confirmed to match only worker.rs:153 (colon-bearing success line), not line 116; delta-ne-1 gate wired; live run needed for runtime confirmation |
+| 5 | 両 agents/\*.toml が ready_pattern/fresh_mode/prerequisite 手順を正確に記述している (SC5) | ✓ VERIFIED (regression) | No changes to agent TOML files; prior verification stands |
 
-**Score:** 4/5 ROADMAP Success Criteria verified (SC1/SC2/SC3/SC5 VERIFIED; SC4 = PARTIAL)
-
-Note: Must-haves count 9 items across 2 plans; ROADMAP has 5 success criteria. SC4 = AGNT-04 = must-have #6 above = PARTIAL.
+**Score:** 5/5 ROADMAP Success Criteria (SC1-SC5 all VERIFIED at static/structural level; SC4/AGNT-04 has human verification items)
 
 ### ROADMAP Success Criteria Coverage
 
 | SC | Text | Status | Note |
 |----|------|--------|------|
-| SC1 | `AGENT=codex` POST /prompt → result/status ファイル生成 | ✓ VERIFIED | turnId=20260612-081024-367 |
-| SC2 | `AGENT=codex` fresh:true で /clear 送信正常動作 | ✓ VERIFIED | rollout 証拠あり、UNKNOWN 返答 |
-| SC3 | `AGENT=opencode` POST /prompt → result/status ファイル生成 | ✓ VERIFIED | result="5", status=done |
-| SC4 | `AGENT=opencode` fresh:true で respawn 方式正常動作 | ✗ PARTIAL | respawn 設定は正しいが E2E テストが vacuous (CR-01) |
-| SC5 | 両 TOML が ready_pattern/fresh_mode/prerequisite 手順を正確に記述 | ✓ VERIFIED | 両ファイル確認済み |
+| SC1 | `AGENT=codex` POST /prompt → result/status ファイル生成 | ✓ VERIFIED | Prior live evidence + no regression |
+| SC2 | `AGENT=codex` fresh:true で /clear 送信正常動作 | ✓ VERIFIED | WR-03 hard gates added; prior live evidence |
+| SC3 | `AGENT=opencode` POST /prompt → result/status ファイル生成 | ✓ VERIFIED | Prior live evidence + no regression |
+| SC4 | `AGENT=opencode` fresh:true で respawn 方式正常動作 | ✓ VERIFIED (static) | Falsifiable gate wired; live confirmation needed |
+| SC5 | 両 TOML が ready_pattern/fresh_mode/prerequisite 手順を正確に記述 | ✓ VERIFIED | Unchanged |
+
+## AGNT-04 Falsifiability Assessment (Primary Gap)
+
+### The Old Vacuous Test (prior VERIFICATION)
+
+The old stage 3 checked only "7331 not in result." Under D-09 architecture (each `opencode run` invocation is a new conversation), the stage-2 seed is discarded before stage-3 runs — even if `fresh_mode=respawn` is completely disabled or misconfigured. The test always passed for an architectural reason unrelated to the respawn mechanism.
+
+### The New Falsifiable Test (05-03 gap closure + CR-01 fix)
+
+**Stage 2.5 (positive control):** Added between stages 2 and 3. Non-fresh turn with file-search-prohibited prompt asks for secret number. Expected UNKNOWN (D-09 non-continuity). If 7331 appears in stage-2.5 response → hard FAIL (WR-06 fix: methodological premise destroyed). This makes explicit what was implicit: the 7331 test in stage 3 is meaningless as an isolation signal.
+
+**Stage 3 main gate — recreate() log delta:**
+```bash
+recreate_before=$(grep -cF '[shared-fate] claude セッション再生成:' "$LOG_FILE" || true)
+# ... fresh:true curl ...
+recreate_after=$(grep -cF '[shared-fate] claude セッション再生成:' "$LOG_FILE" || true)
+recreate_delta=$(( recreate_after - recreate_before ))
+if [[ "$recreate_delta" -ne 1 ]]; then exit 1; fi
+```
+
+**CR-01 fix verified:** The grep pattern is `grep -cF '[shared-fate] claude セッション再生成:'` (fixed-string, colon-bearing prefix).
+- worker.rs:116: `"[shared-fate] claude セッション不健全 → 再生成"` — NO colon after 再生成, does NOT match.
+- worker.rs:153: `"[shared-fate] claude セッション再生成: {} ..."` — HAS colon, MATCHES.
+
+Empirically confirmed with `printf` pipe test: pattern counts exactly 1 for line 153, 0 for line 116.
+
+**Falsifiability proof (static analysis):**
+
+| Failure scenario | Effect on stage 3 | Gate result |
+|-----------------|-------------------|-------------|
+| `fresh_mode = "bogus"` in opencode.toml | process_job returns Err → status="failed" | status != "done" → FAIL |
+| fresh:true ignored (job.fresh never true) | recreate() not called → delta 0 | delta -ne 1 → FAIL |
+| `worker.recreate()` made no-op (no log emit) | success line not emitted → delta 0 | delta -ne 1 → FAIL |
+| Correct respawn path executes | recreate() logs success line → delta 1 | delta == 1 → PASS |
+
+**Known limitation (documented inline in script):** If `ensure_healthy()` at turn start finds the session UNHEALTHY, it calls `recreate()` itself → emits success line → delta becomes 2 → gate fails (false negative). The exact-delta-1 requirement catches this ambiguity conservatively. The ultimate fix (a `[fresh-respawn]` distinct marker in src/turn.rs) requires Rust modification and is out of scope for this phase (zero-Rust-change mandate). The limitation is documented in a 10-line comment block at line 364-373 of the script.
+
+**WR-01 (done allowlist) in opencode script:** All 4 stages (1, 2, 2.5, 3) use `!= "done"` gate. `status="unknown"` (garbled JSON) no longer passes. VERIFIED.
+
+**WR-02 (hard gates) in stage 3:** Empty result and UNKNOWN-not-present both exit 1. VERIFIED.
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `agents/codex.toml` | Codex CLI エージェントプロファイル | ✓ VERIFIED | command/ready_pattern/fresh_mode/clear_command/output_covenant/trigger_template/timeouts 全確認 |
-| `scripts/e2e-codex.sh` | Codex E2E 検証スクリプト | ✓ VERIFIED | 実行可能、bash -n OK、3段階検証、no-search probe |
-| `agents/opencode.toml` | OpenCode エージェントプロファイル | ✓ VERIFIED (deviation) | D-09 に伴い command=opencode-runner.sh, ready_pattern=OpenCodeRunner ready に変更 |
-| `scripts/setup-opencode.sh` | turn.md 冪等生成スクリプト | ✓ VERIFIED | 実行可能、bash -n OK、冪等スキップロジック確認 |
-| `scripts/e2e-opencode.sh` | OpenCode E2E 検証スクリプト | ✓ VERIFIED (partial) | 実行可能、bash -n OK、3段階構造、しかし stage3 は structurally vacuous |
-| `scripts/opencode-runner.sh` | OpenCode ラッパースクリプト（D-09 追加） | ✓ VERIFIED | 実行可能、stdin listener → opencode run 呼び出し、ready_pattern 再送出 |
+| `agents/codex.toml` | Codex CLI エージェントプロファイル | ✓ VERIFIED | Unchanged from prior verification; all fields confirmed |
+| `scripts/e2e-codex.sh` | Codex E2E 検証スクリプト | ✓ VERIFIED | bash -n OK; WR-03 hard gates (empty+UNKNOWN) added to stage 3; WR-04 head -c replaced with ${:0:N}; WR-05 TURNS_DIR comment added |
+| `agents/opencode.toml` | OpenCode エージェントプロファイル | ✓ VERIFIED | fresh_mode = "respawn"; ready_pattern = "OpenCodeRunner ready"; trigger_template = "opencode run --command turn {prompt_path}"; all fields intact |
+| `scripts/setup-opencode.sh` | turn.md 冪等生成スクリプト | ✓ VERIFIED | Unchanged; bash -n OK; prior verification stands |
+| `scripts/e2e-opencode.sh` | OpenCode E2E 検証スクリプト (gap-closed) | ✓ VERIFIED | bash -n OK; stage 2.5 present; recreate_before/after/delta present; grep -cF colon-anchored; delta-ne-1 hard gate; all 4 stages use != "done" allowlist; UNKNOWN + empty hard gates in stage 3; WR-06 7331 hard FAIL in stage 2.5; head -c → ${:0:N} |
+| `scripts/opencode-runner.sh` | OpenCode ラッパースクリプト | ✓ VERIFIED | WR-02 fix: rc=0; eval "$trigger" \|\| rc=$?; logs to stderr not stdout; loop continues |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| scripts/e2e-codex.sh | agents/codex.toml | `AGENT=codex` 起動 → load_agent_profile が codex.toml を読む | ✓ WIRED | `AGENT=codex PORT="$PORT" TURNS_DIR="./turns" cargo run` 確認 |
-| agents/codex.toml | src/profile.rs AgentProfile | toml::from_str デシリアライズ | ✓ WIRED | cargo test 33件グリーン、deny_unknown_fields + validate_profile 通過 |
-| scripts/e2e-opencode.sh | agents/opencode.toml | `AGENT=opencode` 起動 → load_agent_profile が opencode.toml を読む | ✓ WIRED | `AGENT=opencode PORT="$PORT" TURNS_DIR="./turns" cargo run` 確認 |
-| scripts/e2e-opencode.sh | scripts/setup-opencode.sh | `bash "$SCRIPT_DIR/setup-opencode.sh"` 明示呼び出し | ✓ WIRED | line 121 確認 |
-| agents/opencode.toml | scripts/opencode-runner.sh | command = ["bash", "scripts/opencode-runner.sh"] | ✓ WIRED | cwd 依存（IN-04）— プロジェクトルートからの起動が前提 |
-| agents/opencode.toml | ~/.config/opencode/commands/turn.md | trigger_template "/turn" → カスタムコマンド展開 | ✗ NOT_WIRED | D-09 アーキテクチャで trigger_template は "opencode run --command turn {prompt_path}" に変更済み。/turn カスタムコマンドは不使用になったが setup-opencode.sh が依然として turn.md を生成する。opencode run --command turn が turn.md を呼び出すため間接的には使用されている |
+| scripts/e2e-opencode.sh stage 3 | src/worker.rs Worker::recreate() success log | grep -cF '[shared-fate] claude セッション再生成:' in LOG_FILE | ✓ WIRED | Fixed-string pattern confirmed to match worker.rs:153 only; colon disambiguates from line 116 |
+| scripts/e2e-opencode.sh stage 2.5 | POST /prompt (non-fresh) | curl with no fresh flag; UNKNOWN expected | ✓ WIRED | Non-fresh turn wired to server; 7331 FAIL gate wired |
+| turn.rs process_job fresh_mode=respawn branch | worker.recreate() | lines 59-61: match "respawn" => worker.recreate().await? | ✓ WIRED | Confirmed in source; cargo test process_job_fresh_mode_respawn_calls_recreate passes |
+| worker.recreate() | log line worker.rs:153 | eprintln! call confirmed at line 152-155 | ✓ WIRED | Exact string: "[shared-fate] claude セッション再生成: {} （旧 {} を閉鎖）" |
+| LOG_FILE (cargo run stderr redirect) | e2e-opencode.sh grep | `cargo run --release >"$LOG_FILE" 2>&1` — stderr captured | ✓ WIRED | eprintln! goes to stderr; 2>&1 redirects to LOG_FILE; grep reads LOG_FILE |
 
 ### Data-Flow Trace (Level 4)
 
-Turn-file data flow: POST /prompt → prompt-<turnId>.txt → trigger → agent writes result-<turnId>.txt + status-<turnId>.json → GET /turns/{id} reads files.
+The data-flow path is unchanged from prior verification (FLOWING for both agents). The new data flow for AGNT-04 verification:
 
-| Agent | Data Source | Produces Real Data | Status |
-|-------|-------------|--------------------|--------|
-| codex | opencode run or codex TUI → writes result/status files | Yes (実機 E2E 確認済み) | ✓ FLOWING |
-| opencode | opencode run --command turn → writes result/status files | Yes (実機 E2E attempt4 確認済み) | ✓ FLOWING |
+| Step | Source | Sink | Evidence |
+|------|--------|------|----------|
+| fresh:true job | POST /prompt body `{"fresh":true}` | job.fresh = true in process_job | http.rs parses fresh field |
+| fresh dispatch | process_job line 52-65 | worker.recreate() called | match "respawn" → recreate() |
+| recreate log | worker.rs:152-155 eprintln! | LOG_FILE via stderr redirect | 2>&1 in cargo run launch |
+| log count | grep -cF on LOG_FILE | recreate_delta variable | Exact colon-anchored pattern |
+| delta gate | recreate_delta -ne 1 | exit 1 | Hard gate at line 374 |
 
 ### Behavioral Spot-Checks
 
-Step 7b is SKIPPED for this phase — these are agent E2E scripts that require real running agents (codex, opencode) with real API credentials. The orchestrator's live E2E evidence substitutes. Spot-checks of static artifacts (syntax, file existence, field values) are covered in Steps 3-5 above.
+Step 7b is SKIPPED for this phase — requires live opencode/codex agents with real credentials and API auth. Structural analysis substitutes where possible (see AGNT-04 falsifiability table above).
 
-Cargo test: 33 passed, 0 failed (verified above).
+Cargo test: 33 passed, 0 failed (confirmed in this re-verification session).
+
+Static checks run in this session:
+- `bash -n scripts/e2e-opencode.sh` → SYNTAX OK
+- `bash -n scripts/e2e-codex.sh` → SYNTAX OK
+- `grep -cF` pattern discriminates worker.rs:153 vs :116 → confirmed empirically
 
 ### Probe Execution
 
-Step 7c: No conventional `scripts/*/tests/probe-*.sh` files exist. The phase's verification mechanism is the E2E scripts themselves. Orchestrator context records live execution results:
-
-| Script | Run | Stage 1 | Stage 2 | Stage 3 | Status |
-|--------|-----|---------|---------|---------|--------|
-| scripts/e2e-codex.sh | 2026-06-12 final run | result="4", done, 26s | seed done | result="UNKNOWN", done, 19s | PASS |
-| scripts/e2e-opencode.sh | attempt 4 (2026-06-12) | result="5", done, 14s | seed done, 16s | result="UNKNOWN", done, 19s | PASS (vacuous for AGNT-04) |
+No `scripts/*/tests/probe-*.sh` files found. E2E scripts are the verification mechanism. Prior live run evidence (from 05-02 orchestrator context) is the existing runtime proof. The stage-3 live run is flagged as human verification.
 
 ### Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
 |-------------|-------------|-------------|--------|----------|
-| AGNT-01 | 05-01-PLAN.md | Codex CLI で POST /prompt → result 取得が実機 E2E で動作 | ✓ SATISFIED | 実機 E2E stage1 pass + agents/codex.toml + scripts/e2e-codex.sh |
-| AGNT-02 | 05-01-PLAN.md | Codex CLI で fresh:true（/clear 送信）が実機 E2E 動作 | ✓ SATISFIED | rollout ファイル証拠 + no-search probe UNKNOWN 返答 + fresh_mode=command 確認 |
-| AGNT-03 | 05-02-PLAN.md | OpenCode で POST /prompt → result 取得が実機 E2E で動作 | ✓ SATISFIED | 実機 E2E attempt4 stage1 pass + agents/opencode.toml + opencode-runner.sh |
-| AGNT-04 | 05-02-PLAN.md | OpenCode で fresh:true（respawn 方式）が実機 E2E 動作 | ✗ PARTIAL | respawn 設定は正しく実機 PASS したが、テスト自体が unfalsifiable (CR-01) |
+| AGNT-01 | 05-01-PLAN.md | Codex CLI POST /prompt → result E2E | ✓ SATISFIED | Prior live E2E + no regression in scripts |
+| AGNT-02 | 05-01-PLAN.md | Codex CLI fresh:true E2E (WR-03 gates added) | ✓ SATISFIED | WR-03 hard gates added; prior live evidence + stage-3 now requires UNKNOWN |
+| AGNT-03 | 05-02-PLAN.md | OpenCode POST /prompt → result E2E | ✓ SATISFIED | Prior live E2E + no regression |
+| AGNT-04 | 05-02-PLAN.md | OpenCode fresh:true respawn E2E (gap closed) | ✓ SATISFIED (static) | Falsifiable gate wired and confirmed; live human verification needed for runtime proof |
 
 ### Anti-Patterns Found
 
+#### Remaining (acceptable — scope-limited)
+
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| scripts/e2e-codex.sh | 165, 193, 234 | `status != "done"` でなく `status == "timeout" or failed` のみ拒否（WR-01） | Warning | status="unknown"（ガーブル時）がPASSになる |
-| scripts/e2e-opencode.sh | 176, 204, 243 | 同上（WR-01） | Warning | 同上 |
-| scripts/e2e-codex.sh | 249 | stage3 UNKNOWN 検出が INFO ログのみ（hard gate でない）（WR-02） | Warning | 空結果でも隔離 PASS になる |
-| scripts/e2e-opencode.sh | 258 | 同上（WR-02） | Warning | 同上 |
-| agents/codex.toml | 58 | trigger_template に日本語含有 — opencode.toml Pitfall 1 が同パスでマルチバイト破棄を文書化（WR-04） | Warning | 実機 E2E は PASS しているが trigger 意味論が実行時依存 |
-| scripts/opencode-runner.sh | 33 | `eval "$trigger"` で未検証 PTY 入力を実行（WR-05） | Warning | POST /command が実質的に任意シェル実行パスになる（loopback限定でmitigation済み） |
-| scripts/setup-opencode.sh | 56-74 | `bash:allow` をグローバル opencode.json に書く（WR-06） | Warning | 全 opencode セッションで bash 自動承認になる |
-| src/worker.rs | 126-157, 172-202 | recreate/restart の ready-timeout エラーパスで新規セッションをリークする（WR-09） | Warning | 連続障害時に孤立エージェントプロセスが蓄積する可能性 |
+| scripts/e2e-codex.sh | 173, 201 | `status == "timeout" \|\| "failed"` (not `!= "done"` allowlist) in stages 1-2 | Warning | status="unknown" on garbled JSON would PASS stages 1-2 of codex. Stage 3 now has full hard gates (WR-03). This was NOT in scope for 05-03 plan or 05-REVIEW-FIX (which covered WR-03 = codex stage-3 weakness only). Affects AGNT-01/AGNT-02 codex test quality but not AGNT-04 gap closure. |
+| agents/opencode.toml | 57 | `clear_command = "/new"` is dead config and a known-broken value (IN-03) | Info | Harmless under respawn; documented in REVIEW as out-of-fix-scope |
+| scripts/opencode-runner.sh | 41 | `eval "$trigger"` safety comment references "no spaces" not the turnId whitelist (IN-04) | Info | REVIEW noted as out-of-fix-scope |
 
-No TBD/FIXME/XXX markers found in phase 05 files.
+#### Resolved in this gap-closure pass
+
+| Finding | Resolution |
+|---------|------------|
+| CR-01: recreate gate matched ensure_healthy log | Fixed: grep -cF colon-anchored to worker.rs:153 only (commit 537acf0) |
+| WR-01 (REVIEW): baseline ambiguity | Fixed: delta -ne 1 exact gate instead of delta > 0 (commit 9634335) |
+| WR-02 (REVIEW): opencode-runner.sh swallows exit code | Fixed: rc capture + stderr log (commit e4ff683) |
+| WR-03 (REVIEW): codex stage-3 weaker than opencode | Fixed: empty+UNKNOWN hard gates added (commit 2225b08) |
+| WR-04 (REVIEW): head -c pipefail hazard | Fixed: ${:0:N} slicing in both scripts (commit 8e8c7bb) |
+| WR-05 (REVIEW): TURNS_DIR coupling undocumented | Fixed: EFFECTIVE_TURNS_DIR variable + log line in both scripts (commit 92832d7) |
+| WR-06 (REVIEW): stage-2.5 7331 leak non-fatal | Fixed: hard FAIL gate promoted (commit d830f63) |
+| WR-01 (initial VERIFICATION): done allowlist in opencode | Fixed: all 4 opencode stages use != "done" (commit ecc5a30) |
+| WR-02 (initial VERIFICATION): UNKNOWN not hard gate | Fixed: UNKNOWN required in stage 3 + empty gate (commit ecc5a30) |
+
+No TBD/FIXME/XXX markers found in any files modified by this phase.
+
+### Human Verification Required
+
+#### 1. AGNT-04 Live E2E — Normal Run
+
+**Test:** Run `bash scripts/e2e-opencode.sh` from project root with opencode authenticated and ht-mcp on PATH.
+
+**Expected:**
+- Stage 1: result non-empty, status=done
+- Stage 2: status=done (seed turn)
+- Stage 2.5: status=done, result contains UNKNOWN or is UNKNOWN-like (not 7331)
+- Stage 3: status=done, result non-empty, result contains UNKNOWN, result does not contain 7331, `recreate_delta == 1` logged in summary
+
+**Why human:** Requires live opencode agent with real GitHub Copilot auth. Cannot run without real agent + credentials.
+
+#### 2. AGNT-04 Falsifiability Proof — Break the Respawn Path
+
+**Test:** Temporarily set `fresh_mode = "invalid_value"` in `agents/opencode.toml`. Run `bash scripts/e2e-opencode.sh`. Restore the original value.
+
+**Expected:** Script exits 1 at stage 3 (status gate or recreate_delta gate fires), not at stage 1 or 2. This proves the test cannot be vacuously passed when the respawn mechanism is broken.
+
+**Why human:** Requires live execution; the static falsifiability proof above confirms it SHOULD fail, but runtime confirmation is the authoritative test.
+
+#### 3. Confirm `recreate_delta == 1` Assumption at Runtime
+
+**Test:** During a normal AGNT-04 run, verify in the summary log that `recreate_delta = 1` (not 2+).
+
+**Expected:** The opencode-runner.sh wrapper emits "OpenCodeRunner ready" immediately on startup, so `ensure_healthy()` at stage-3 turn start finds the snapshot healthy → does NOT call recreate() → delta stays at 1 after the fresh_mode=respawn call.
+
+**Why human:** The exact-delta-1 gate is correct in the happy path but could false-negative if the session is deemed unhealthy at the moment of stage-3 turn processing. Runtime confirmation validates the assumption.
 
 ### Gaps Summary
 
-**1 gap blocks clean passage (AGNT-04 vacuous test):**
+No blocking gaps remain. The single gap from the prior verification (AGNT-04 vacuous E2E) has been closed structurally:
 
-The critical finding (code review CR-01) is confirmed: the OpenCode fresh-isolation E2E test is structurally unfalsifiable. The root cause is architectural — D-09 adopted `opencode run --command turn <path>` which creates a new conversation per invocation. This means stage 2 seeds memory into a context that is discarded the moment `opencode run` exits, so stage 3 (`fresh:true`) asserting no memory is guaranteed to pass regardless of whether `fresh_mode = "respawn"` works, is misconfigured, or is silently dropped.
+1. The stage-3 gate now depends on a property (Worker::recreate() log emission) that is uniquely coupled to the respawn path. Breaking the respawn mechanism causes delta = 0 → deterministic FAIL.
 
-The REQUIREMENTS.md AGNT-04 text ("respawn 方式: セッション kill+再生成 が実機 E2E 動作する") is consistent with the implementation, and `fresh_mode = "respawn"` is correctly set. However, the verification artifact (`e2e-opencode.sh`) does not actually test that the respawn mechanism fires on `fresh:true` — it passes for a structurally unrelated reason.
+2. Stage 2.5 makes the D-09 architecture's non-continuity explicit and records it, so the test is honest about what it measures.
 
-**The practical consequence:** If `fresh_mode` in opencode.toml were changed to an invalid string, or if the `fresh:true` flag path in the Rust worker were broken for the opencode agent, `e2e-opencode.sh` stage 3 would still pass. The test provides no discriminating power.
+3. The CR-01 false-positive risk (ensure_healthy log matching) was eliminated by anchoring to the colon-bearing success line only.
 
-**Resolution options (in order of preference):**
-1. Add a positive-control turn (stage 2.5: non-fresh query must return UNKNOWN, proving no continuity exists) and replace stage-3 with a server-log check that `[recreate]` fired. This makes the test honest about its limits while still verifying the respawn trigger.
-2. Add `opencode run --continue <session_id>` support for non-fresh turns to establish real conversation continuity, making stage 2→3 meaningful.
+The residual codex WR-01 (stages 1-2 status gates) is a WARNING affecting AGNT-01/AGNT-02 test quality but does not affect AGNT-04 and is not a blocker for the phase goal.
 
-The phase's primary goal ("ターンファイル方式での結果取得が動作することを E2E で確認できる") is substantially achieved for both agents. The gap is specifically in AGNT-04's verification quality, not in the runtime behavior itself.
+Human verification items (live run confirmation, falsifiability proof by breaking the path, delta-1 assumption) are the reason status is `human_needed` rather than `passed`. All automated checks pass.
 
 ---
 
-_Verified: 2026-06-12T10:20:00Z_
+_Verified: 2026-06-15T01:10:00Z_
 _Verifier: Claude (gsd-verifier)_
+_Re-verification: Yes — after 05-03 gap-closure plan + 05-REVIEW-FIX_
