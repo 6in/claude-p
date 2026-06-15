@@ -339,13 +339,29 @@ fi
 # wait:true が返った時点で処理完了 = recreate ログ出力済み（cleanup による LOG_FILE 削除前）
 # 再生成成功行のみを計数する（ensure_healthy の "不健全 → 再生成" 行を除外 — CR-01）
 recreate_after=$(grep -cF '[shared-fate] claude セッション再生成:' "$LOG_FILE" || true)
-log "respawn 発火確認: LOG_FILE 内 [shared-fate] 再生成行数 = before=${recreate_before} / after=${recreate_after}"
+recreate_delta=$(( recreate_after - recreate_before ))
+log "respawn 発火確認: LOG_FILE 内 [shared-fate] 再生成行数 = before=${recreate_before} / after=${recreate_after}（増分 ${recreate_delta}）"
 
-if [[ "$recreate_after" -le "$recreate_before" ]]; then
-    log "ERROR: 段階 3 失敗 — fresh:true ターンで Worker::recreate() が発火しなかった"
-    log "  before=${recreate_before}, after=${recreate_after}（増分ゼロ）"
-    log "  agents/opencode.toml の fresh_mode=respawn が有効に機能していないことを示す"
-    log "  respawn 機構が壊れているか、fresh フラグが無視されている可能性がある"
+# WR-01: 単一の fresh ターンに対し増分は厳密に 1 を期待する。
+# CR-01 でパターンを成功行に絞ったが、after > before だけでは「fresh/respawn 分岐が
+# 発火した」ことを完全には立証できない: ensure_healthy() がスナップショットに
+# ready_pattern を見つけられない場合、ensure_healthy() 自身が recreate() を呼び成功行を
+# emit する（worker.rs:115-117 → 153）。よって同一ターン内で ensure_healthy 由来の
+# recreate が起きると増分が 2 以上に膨らみ、fresh 分岐への帰属が曖昧になる。
+# 増分 == 1 を厳密ゲートにすることで、respawn 分岐 1 回ぶんの recreate のみが起きたことを
+# 担保する（増分 0 = respawn 未発火、増分 >=2 = ensure_healthy 由来の混入を示す）。
+# 注: ログ出力による不明瞭さを完全排除する究極策は src/turn.rs の respawn 分岐に
+# fresh 固有マーカー（例 [fresh-respawn]）を追加することだが、本フェーズは Rust 無改変方針。
+if [[ "$recreate_delta" -ne 1 ]]; then
+    log "ERROR: 段階 3 失敗 — fresh:true ターンの recreate() 増分が 1 ではない（実測 ${recreate_delta}）"
+    log "  before=${recreate_before}, after=${recreate_after}"
+    if [[ "$recreate_delta" -le 0 ]]; then
+        log "  増分ゼロ: agents/opencode.toml の fresh_mode=respawn が発火していない"
+        log "  respawn 機構が壊れているか、fresh フラグが無視されている可能性がある"
+    else
+        log "  増分 2 以上: ensure_healthy() 由来の recreate が同一ターン内で混入した可能性"
+        log "  fresh/respawn 分岐への帰属が曖昧なため検証失敗とする"
+    fi
     exit 1
 fi
 
@@ -359,7 +375,7 @@ log "段階 1 (AGNT-03): turnId=${turn_id1}, 所要時間=${T1_ELAPSED}s, status
 log "段階 2 (履歴シード): turnId=${turn_id2}, 所要時間=${T2_ELAPSED}s, status=${status2} — PASS"
 log "段階 2.5 (正の対照): turnId=${turn_id25}, 所要時間=${T25_ELAPSED}s, status=${status25} — PASS（継続性欠如を実機記録）"
 log "段階 3 (AGNT-04): turnId=${turn_id3}, 所要時間=${T3_ELAPSED}s, status=${status3} — PASS"
-log "  respawn 発火証明: [shared-fate] 再生成行 before=${recreate_before} → after=${recreate_after}（増分 $(( recreate_after - recreate_before ))）"
+log "  respawn 発火証明: [shared-fate] 再生成行 before=${recreate_before} → after=${recreate_after}（増分 ${recreate_delta}）"
 log ""
 log "fresh_mode 確定値: respawn（/new はエージェント選択ダイアログのため不採用 — D-01/D-02）"
 log "AGNT-04 検証方式: Worker::recreate() 発火ログ検証（respawn が壊れれば必ず FAIL — 05-03 gap-closure）"
