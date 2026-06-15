@@ -9,7 +9,7 @@ use ht_webif::config::{
     load_agent_name, load_agents_dir, load_cors_origins, load_ht_mcp_path, load_port,
     load_turns_dir,
 };
-use ht_webif::http::{build_router, AppState, InstanceInfo};
+use ht_webif::http::{build_router, AppState, InstanceInfo, TurnIdAllocator};
 use ht_webif::profile::load_agent_profile;
 use ht_webif::turn::{worker_loop, Job};
 use ht_webif::worker::Worker;
@@ -70,6 +70,8 @@ async fn main() -> Result<()> {
         job_tx,
         output_covenant,
         instance_info,
+        // turnId 採番の単一直列化点（HT-PROTOCOL §3.2）。worker とは別ロック。
+        turn_id_alloc: Arc::new(TurnIdAllocator::new()),
     });
     let cors_origins = load_cors_origins();
     eprintln!("[profile] CORS 許可オリジン: {:?}", cors_origins);

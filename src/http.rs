@@ -20,6 +20,79 @@ use crate::mcp::{Mcp, McpClient, Restartable};
 use crate::turn::{build_prompt_body, read_turn, Job};
 use crate::worker::Worker;
 
+/// turnId 採番の内部状態（単一直列化点で保護される）。
+struct TurnIdAllocatorState {
+    /// 直前に発番したベースタイムスタンプ文字列（YYYYMMDD-HHMMSS-mmm 形式）。
+    last_base: String,
+    /// 同一 base に対して払い出した連番カウンタ。新 base が来たときリセットされる。
+    seq: u32,
+}
+
+/// HT-PROTOCOL §3.2 準拠の turnId アロケータ。
+///
+/// ## 設計根拠
+///
+/// base（YYYYMMDD-HHMMSS-mmm）と seq は結合した不変条件を持つ:
+/// 新 base 検出時は seq をリセット、同一 base では seq を単調増加させる。
+/// この2フィールド結合不変条件は AtomicU64 単体では CAS なしに表現できないため、
+/// 極短時間だけ保持する `tokio::sync::Mutex` を採番の単一直列化点とする。
+///
+/// `std::sync::Mutex` ではなく `tokio::sync::Mutex` を選ぶのは、本クレートの
+/// async/lock 慣習（CLAUDE.md）に従い、将来 `.await` を跨ぐ可能性に備えるため。
+/// ただし本実装ではロックはメモリ内文字列整形のみで保持し、
+/// ファイル I/O や他の `.await` を跨いで保持しない。
+///
+/// worker Mutex とは完全に別ロックであり、CR-01 の worker-Mutex 競合を再導入しない。
+pub struct TurnIdAllocator {
+    state: Mutex<TurnIdAllocatorState>,
+}
+
+impl Default for TurnIdAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TurnIdAllocator {
+    /// 初期状態（last_base 空文字、seq 0）でアロケータを構築する。
+    pub fn new() -> Self {
+        Self {
+            state: Mutex::new(TurnIdAllocatorState {
+                last_base: String::new(),
+                seq: 0,
+            }),
+        }
+    }
+
+    /// HT-PROTOCOL §3.2: 一意な turnId を発番して返す。
+    ///
+    /// - 新しい base（現在ミリ秒タイムスタンプ）が前回と異なる場合: seq をリセットし
+    ///   base をそのまま返す（既存形式と後方互換。サフィックス無し）。
+    /// - base が前回と同一の場合（同一ミリ秒の並行採番）: seq を単調増加させ
+    ///   `{base}-{seq:03}` を返す（例: `20260615-090456-080-001`）。
+    ///
+    /// サフィックスはハイフンと 3 桁ゼロ埋め数値のみで構成され、
+    /// http.rs の `^[0-9-]+$` ホワイトリストを満たす（英字を含まない）。
+    ///
+    /// ロックはこの整形処理の間だけ保持し、ファイル I/O や他の `.await` を跨がない。
+    pub async fn next_turn_id(&self) -> String {
+        let base = chrono::Utc::now()
+            .format("%Y%m%d-%H%M%S-%3f")
+            .to_string();
+        let mut s = self.state.lock().await;
+        if base != s.last_base {
+            // 新しい base: seq をリセットし base をそのまま返す（サフィックス無し）
+            s.last_base = base.clone();
+            s.seq = 0;
+            base
+        } else {
+            // 同一 base（同一ミリ秒の衝突）: seq を単調増加させ連番サフィックスを付与
+            s.seq += 1;
+            format!("{base}-{:03}", s.seq)
+        }
+    }
+}
+
 /// 起動以降イミュータブルなインスタンス識別情報 + lock-free メトリクス。
 /// worker Mutex を一切取得せず /info ハンドラが直接読む（D-02/D-05）。
 pub struct InstanceInfo {
@@ -44,6 +117,9 @@ pub struct AppState<M: Mcp + Send + 'static = McpClient> {
     /// インスタンス情報は起動後イミュータブル（agent_name/port/started_at）または
     /// lock-free atomic（is_busy/turns_processed）なので Mutex 不要（D-02/D-05 CR-01 パターン）。
     pub instance_info: Arc<InstanceInfo>,
+    /// turnId 採番の単一直列化点。worker Mutex とは別ロックで、
+    /// prompt_handler が並行着信しても同一 turnId を採番しない（HT-PROTOCOL §3.2）。
+    pub turn_id_alloc: Arc<TurnIdAllocator>,
 }
 
 pub(crate) fn ise<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
@@ -88,8 +164,8 @@ async fn prompt_handler<M: Mcp + Send + 'static>(
     State(state): State<Arc<AppState<M>>>,
     Json(req): Json<PromptReq>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    // turnId 発番（HT-PROTOCOL §3: ミリ秒精度、発番は制御側）
-    let turn_id = chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f").to_string();
+    // turnId 発番（HT-PROTOCOL §3.2: ミリ秒精度 + 衝突時 -<seq> 連番、AppState 所有アロケータで原子化）
+    let turn_id = state.turn_id_alloc.next_turn_id().await;
     let prompt_path = state.turns_dir.join(format!("prompt-{turn_id}.txt"));
     let result_path = state.turns_dir.join(format!("result-{turn_id}.txt"));
     let status_path = state.turns_dir.join(format!("status-{turn_id}.json"));
@@ -303,6 +379,7 @@ mod tests {
             job_tx,
             output_covenant,
             instance_info,
+            turn_id_alloc: Arc::new(TurnIdAllocator::new()),
         });
         (state, job_rx)
     }
