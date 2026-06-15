@@ -26,16 +26,35 @@ HTTP リクエストを受けた WebIF は `turns/` に `prompt-<turnId>.txt` �
 - **`claude` CLI**: PATH 上にあり、**Max サブスクリプションで既にログイン済み**であること（`~/.claude/.credentials.json` の OAuth 認証情報に依存）。**`ANTHROPIC_API_KEY` は使用しない**（これが Core Value の根拠）
 - **POSIX-like OS**: ファイルの atomic rename（`.tmp` → 本名）を前提とする（[HT-PROTOCOL.md](./HT-PROTOCOL.md) v1.1 §6）
 
-## ビルド
+## インストール（PATH 配布）
 
 ```bash
-cd webif
+just install
+```
+
+`just install` を実行すると:
+
+1. リリースビルドを行う（`cargo build --release`）
+2. `ht-webif` と `launch-agents.sh` を `~/.local/bin/` にコピーする
+3. `agents/*.toml` を `${XDG_CONFIG_HOME:-~/.config}/claude-p/agents/` にコピーする
+4. `~/.local/bin` が `PATH` に含まれていない場合は追加手順を表示する
+
+インストール後は任意のディレクトリから `ht-webif` や `launch-agents.sh up` を呼べる。
+
+```bash
+# PATH に ~/.local/bin が含まれていない場合は追加する（~/.bashrc / ~/.zshrc 等）
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+## ビルド（リポジトリ内で直接使う場合）
+
+```bash
 cargo build --release
 ```
 
 ## 起動
 
-1. `webif/` 直下で `.env` を用意する:
+1. リポジトリ直下で `.env` を用意する:
 
    ```bash
    cd webif
@@ -71,9 +90,11 @@ cargo build --release
 
 `instances.conf` + `just up-all` / `just down-all` / `just agents-status` で複数の WebIF インスタンスを一括管理できる。
 
+> **重要:** `instances.conf` は `launch-agents.sh` を実行した **cwd**（カレントディレクトリ）から読む（`D-03`）。ターン成果物も同じ cwd 基準で `./turns-<port>/<agent>/` に書き出される。任意のディレクトリに `instances.conf` を置き、そのディレクトリで `launch-agents.sh up` を実行すること。
+
 #### instances.conf — 設定ファイル書式
 
-プロジェクトルートの `instances.conf` がインスタンス定義ファイル。書式は `<agent> <port> [KEY=VALUE ...]` で、`#` で始まるコメント行と空行は無視される:
+`instances.conf` がインスタンス定義ファイル（cwd から読む）。書式は `<agent> <port> [KEY=VALUE ...]` で、`#` で始まるコメント行と空行は無視される:
 
 ```
 # instances.conf — 多重インスタンス設定。
@@ -113,13 +134,13 @@ just down-all
 per-instance 管理ファイル（claude-p 規約準拠）:
 - PID: `/tmp/ht-webif-<port>.pid`
 - ログ: `/tmp/ht-webif-<port>.log`
-- ターン成果物: `<webif>/turns-<port>/`
+- ターン成果物: `<cwd>/turns-<port>/`（`launch-agents.sh` を実行した cwd 基準）
 
 #### ターンディレクトリのコリジョン回避
 
 ターン成果物は常に `<TURNS_DIR>/<agent-name>/` に書き出される（D-16）。`AGENT` が異なれば自動的にサブディレクトリが分離されるため、通常は `TURNS_DIR` を変える必要はない。
 
-同一エージェントを複数ポートで起動する場合は `TURNS_DIR` をポート別に分ける。`launch-agents.sh` はこれを自動的に行う（`TURNS_DIR=<webif>/turns-<port>` として spawn）。
+同一エージェントを複数ポートで起動する場合は `TURNS_DIR` をポート別に分ける。`launch-agents.sh` はこれを自動的に行う（`TURNS_DIR=<cwd>/turns-<port>` として spawn）。
 
 #### クレデンシャル分離ガイド
 
@@ -415,7 +436,7 @@ curl -s -X POST http://127.0.0.1:8080/restart
 | `HT_MCP_PATH` | `ht-mcp` | `ht-mcp` バイナリのパス。未設定なら PATH 上を探索 |
 | `PORT` | `8080` | HTTP listener のポート番号。多重起動時はインスタンス毎に変える |
 | `AGENT` | `claude` | 使用するエージェントプロファイル名。`agents/<name>.toml` を読む。未指定なら `claude`（後方互換） |
-| `AGENTS_DIR` | `./agents` | プロファイル TOML の探索ディレクトリ |
+| `AGENTS_DIR` | （自動探索） | プロファイル TOML の探索ディレクトリ。未設定時は `./agents`（cwd 基準）→ `${XDG_CONFIG_HOME:-~/.config}/claude-p/agents` の順で探索し、見つからなければエラー。`just install` で XDG グローバルに自動コピーされる |
 | `TURNS_DIR` | `./turns` | ターン成果物の出力先ベースディレクトリ。**実際の書き込み先は常に `<TURNS_DIR>/<agent-name>/`**（D-16）。これは v1.0 で `TURNS_DIR` を明示指定していた場合と非互換になるため注意 |
 | `CORS_ORIGINS` | `*` | CORS 許可オリジン（カンマ区切り）。`*` で全許可。Web フロントから直接叩く場合に絞り込める |
 

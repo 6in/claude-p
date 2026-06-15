@@ -104,3 +104,56 @@ dist-all: dist-linux-amd64 dist-linux-arm64 dist-windows-amd64
 dist-clean:
     rm -rf {{dist_dir}}
     @echo "removed: {{dist_dir}}/"
+
+# ht-webif と launch-agents.sh を ~/.local/bin に、agents/*.toml を XDG グローバルに配置する。
+# D-04: PATH 配布。インストール後は任意のディレクトリから ht-webif / launch-agents.sh up を呼べる。
+install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # ビルド
+    cargo build --release
+
+    # バイナリとランチャーを ~/.local/bin に配置
+    mkdir -p "$HOME/.local/bin"
+    cp target/release/ht-webif "$HOME/.local/bin/ht-webif"
+    cp scripts/launch-agents.sh "$HOME/.local/bin/launch-agents.sh"
+    chmod +x "$HOME/.local/bin/launch-agents.sh"
+    echo "インストール完了:"
+    echo "  $HOME/.local/bin/ht-webif"
+    echo "  $HOME/.local/bin/launch-agents.sh"
+
+    # agents/*.toml を XDG グローバルにコピー（既存ファイルは上書き）
+    # D-02: XDG_CONFIG_HOME 尊重（未設定時は HOME/.config）
+    AGENTS_GLOBAL="${XDG_CONFIG_HOME:-$HOME/.config}/claude-p/agents"
+    mkdir -p "$AGENTS_GLOBAL"
+    if ls agents/*.toml >/dev/null 2>&1; then
+        for f in agents/*.toml; do
+            cp "$f" "$AGENTS_GLOBAL/"
+            echo "  $AGENTS_GLOBAL/$(basename "$f")"
+        done
+        echo "agents プロファイルをコピーしました: $AGENTS_GLOBAL"
+    else
+        echo "agents/*.toml が見つかりません（スキップ）"
+    fi
+
+    # PATH 未登録時の注意表示
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*)
+            echo "PATH に ~/.local/bin が含まれています。すぐに使用できます。"
+            ;;
+        *)
+            echo ""
+            echo "注意: ~/.local/bin が PATH に含まれていません。"
+            echo "以下をシェル設定ファイル（~/.bashrc / ~/.zshrc 等）に追加してください:"
+            echo '  export PATH="$HOME/.local/bin:$PATH"'
+            ;;
+    esac
+
+# ht-webif と launch-agents.sh を ~/.local/bin から削除する（agents グローバルは保持）。
+uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f "$HOME/.local/bin/ht-webif" "$HOME/.local/bin/launch-agents.sh"
+    echo "アンインストール完了: ~/.local/bin/ht-webif, ~/.local/bin/launch-agents.sh を削除しました"
+    echo "注意: agents グローバル（${XDG_CONFIG_HOME:-$HOME/.config}/claude-p/agents）は削除しませんでした。"
+    echo "  手動で削除する場合: rm -rf \"${XDG_CONFIG_HOME:-$HOME/.config}/claude-p/agents\""
