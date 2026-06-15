@@ -26,7 +26,11 @@ pub struct InstanceInfo {
     pub agent_name: String,
     pub port: u16,
     pub started_at: Instant,
-    pub is_busy: AtomicBool,        // D-02: worker_loop がトグル
+    pub is_busy: AtomicBool, // D-02: worker_loop がデキュー中のターンでトグル（実行中フラグ）
+    /// WR-03: キュー投入〜完了までの在庫数。prompt_handler が send 成功で +1、
+    /// worker_loop が process_job 後に -1 する。/info の status はこの値で判定するため、
+    /// 「キュー済みだが未デキュー」の間も busy を返せる（ロードバランサが空きと誤認しない）。
+    pub in_flight: AtomicU64,
     pub turns_processed: AtomicU64, // D-04: ターン完了ごとにインクリメント
 }
 
@@ -52,7 +56,9 @@ async fn info_handler<M: Mcp + Send + 'static>(
     State(state): State<Arc<AppState<M>>>,
 ) -> Json<Value> {
     let info = &state.instance_info;
-    let status = if info.is_busy.load(Ordering::Relaxed) {
+    // WR-03: status はキュー在庫（in_flight）で判定する。デキュー前のジョブも busy 扱いに
+    // することで、ロードバランサが「キュー済みだが未実行」のインスタンスを空きと誤認しない。
+    let status = if info.in_flight.load(Ordering::Relaxed) > 0 {
         "busy"
     } else {
         "idle"
@@ -109,6 +115,13 @@ async fn prompt_handler<M: Mcp + Send + 'static>(
         })
         .await
         .map_err(|_| ise("ジョブキューが閉じています"))?;
+
+    // WR-03: send 成功後に in_flight を +1。worker_loop が完了時に -1 する。
+    // これでデキュー前から /info が busy を返せる。
+    state
+        .instance_info
+        .in_flight
+        .fetch_add(1, Ordering::Relaxed);
 
     if req.wait {
         // 同期オプション: status ファイルが出るまで待つ
@@ -281,6 +294,7 @@ mod tests {
             port: 8080,
             started_at: Instant::now(),
             is_busy: AtomicBool::new(false),
+            in_flight: AtomicU64::new(0),
             turns_processed: AtomicU64::new(0),
         });
         let state = Arc::new(AppState {

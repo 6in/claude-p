@@ -99,12 +99,16 @@ pub async fn worker_loop<M: Mcp + Send + 'static>(
     instance_info: Arc<InstanceInfo>,
 ) {
     while let Some(job) = job_rx.recv().await {
-        // D-01: ターン開始で busy にトグル
+        // D-01: ターン開始で busy にトグル（実行中フラグ）
         instance_info.is_busy.store(true, Ordering::Relaxed);
         let mut w = worker.lock().await;
         let result = process_job(&mut w, &turns_dir, &job).await;
         // D-01: ターン終了で idle に戻す
         instance_info.is_busy.store(false, Ordering::Relaxed);
+        // WR-03: 在庫を1件減らす。prompt_handler が send 成功で +1 したぶんを相殺する。
+        // /info の busy/idle 判定はこの in_flight に基づくため、キューに残ジョブがある間は
+        // busy のままになり、空きインスタンスへの振り分けが正しく行われる。
+        instance_info.in_flight.fetch_sub(1, Ordering::Relaxed);
         // D-04: ターン完了ごとにカウンタをインクリメント（成功・失敗問わず）
         instance_info
             .turns_processed

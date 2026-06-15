@@ -40,6 +40,7 @@ async fn main() -> Result<()> {
         port,
         started_at: Instant::now(),
         is_busy: AtomicBool::new(false),
+        in_flight: AtomicU64::new(0),
         turns_processed: AtomicU64::new(0),
     });
 
