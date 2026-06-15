@@ -3,11 +3,13 @@
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
 
+use crate::http::InstanceInfo;
 use crate::mcp::Mcp;
 use crate::worker::Worker;
 
@@ -94,10 +96,20 @@ pub async fn worker_loop<M: Mcp + Send + 'static>(
     worker: Arc<Mutex<Worker<M>>>,
     turns_dir: PathBuf,
     mut job_rx: mpsc::Receiver<Job>,
+    instance_info: Arc<InstanceInfo>,
 ) {
     while let Some(job) = job_rx.recv().await {
+        // D-01: ターン開始で busy にトグル
+        instance_info.is_busy.store(true, Ordering::Relaxed);
         let mut w = worker.lock().await;
-        if let Err(e) = process_job(&mut w, &turns_dir, &job).await {
+        let result = process_job(&mut w, &turns_dir, &job).await;
+        // D-01: ターン終了で idle に戻す
+        instance_info.is_busy.store(false, Ordering::Relaxed);
+        // D-04: ターン完了ごとにカウンタをインクリメント（成功・失敗問わず）
+        instance_info
+            .turns_processed
+            .fetch_add(1, Ordering::Relaxed);
+        if let Err(e) = result {
             eprintln!("[worker] ジョブ {} 失敗: {e}", job.turn_id);
             // 失敗を status ファイルに記録（GET が拾えるように）
             let status_path = turns_dir.join(format!("status-{}.json", job.turn_id));
