@@ -96,7 +96,7 @@
 
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — GET /info エンドポイント: InstanceInfo (lock-free) + info_handler + worker_loop status/counter + main.rs 配線（PARA-01/02）
+- [x] 06-01-PLAN.md — GET /info エンドポイント: InstanceInfo (lock-free) + info_handler + worker_loop status/counter + main.rs 配線（PARA-01/02）
 
 **Wave 2** *(blocked on Wave 1 — /info readiness に依存)*
 
@@ -115,7 +115,7 @@
 | 3. Testing & CI Automation | v1.0 | 6/6 | Complete | 2026-05-25 |
 | 4. Agent Profile Abstraction | v2.0 | 4/4 | Complete    | 2026-06-11 |
 | 5. Codex CLI and OpenCode Validation | v2.0 | 3/3 | Complete    | 2026-06-15 |
-| 6. Multi-Instance Parallel Foundation | v2.0 | 0/3 | Not started | - |
+| 6. Multi-Instance Parallel Foundation | v2.0 | 1/3 | In Progress|  |
 
 ---
 *Roadmap created: 2026-05-23*
