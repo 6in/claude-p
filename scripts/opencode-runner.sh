@@ -30,7 +30,18 @@ while true; do
             # トリガーを実行（例: "opencode run --command turn ./turns/opencode/prompt-xxx.txt"）
             # eval は引数分割のために使用。パスにスペースを含む場合は問題になるが、
             # turnId 形式（YYYYMMDD-HHMMSS-mmm）はスペースを含まないため安全。
-            eval "$trigger" 2>&1 || true
+            # WR-02: opencode run 失敗（認証切れ・モデルエラー・非ゼロ終了）を握り潰さず
+            # 終了コードを stderr にログする。stdout（PTY 画面 = ht-mcp が拾うスナップショット）
+            # に混ぜないことで ready_pattern 誤検出やスナップショット汚染を避ける。
+            # ループは継続する（次ターンの ready 再送出のため）。
+            # rc は eval 直後に取得する。`if ! eval` の then 節内では $? が
+            # 否定演算子の結果（0）になり eval の終了コードを取りこぼすため、
+            # 一旦 rc に退避してから判定する。
+            rc=0
+            eval "$trigger" || rc=$?
+            if [[ "$rc" -ne 0 ]]; then
+                echo "[opencode-runner] WARN: trigger 失敗 (rc=${rc}): $trigger" >&2
+            fi
         fi
         # 次のターン用に準備完了シグナルを再送出
         echo "OpenCodeRunner ready"
