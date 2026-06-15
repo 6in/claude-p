@@ -1,19 +1,14 @@
 ---
-status: testing
+status: complete
 phase: 06-multi-instance-parallel-foundation
 source: [06-VERIFICATION.md]
 started: 2026-06-15T08:20:00Z
-updated: 2026-06-15T09:45:00Z
+updated: 2026-06-15T11:28:53Z
 ---
 
 ## Current Test
 
-number: 2
-name: 100 ターン並行実行時のターンファイルコリジョン非発生（06-04 修正後の再確認）
-expected: |
-  同一インスタンスへ同一ミリ秒に N 並行 POST /prompt しても turnId が全件一意で、
-  prompt/result/status ファイルが互いに上書きされない。
-awaiting: user response（実機での再確認、任意）
+[testing complete]
 
 ## Tests
 
