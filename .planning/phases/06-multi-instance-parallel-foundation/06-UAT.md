@@ -1,14 +1,19 @@
 ---
-status: diagnosed
+status: testing
 phase: 06-multi-instance-parallel-foundation
 source: [06-VERIFICATION.md]
 started: 2026-06-15T08:20:00Z
-updated: 2026-06-15T09:10:00Z
+updated: 2026-06-15T09:45:00Z
 ---
 
 ## Current Test
 
-[testing complete]
+number: 2
+name: 100 ターン並行実行時のターンファイルコリジョン非発生（06-04 修正後の再確認）
+expected: |
+  同一インスタンスへ同一ミリ秒に N 並行 POST /prompt しても turnId が全件一意で、
+  prompt/result/status ファイルが互いに上書きされない。
+awaiting: user response（実機での再確認、任意）
 
 ## Tests
 
@@ -24,14 +29,18 @@ note: |
 
 ### 2. 100 ターン並行実行時のターンファイルコリジョン非発生
 expected: 2インスタンス同時稼働中に各インスタンスへ 50 ターン投入しても、turns-8080/claude/ と turns-8081/codex/ が互いのファイルを上書きしない
-result: issue
+result: resolved-in-code
 reported: "同一インスタンスへ同一ミリ秒に並行POSTすると turnId(YYYYMMDD-HHMMSS-mmm) が衝突し、prompt/result/status が上書きされる。8080は3ターン処理でディスク上ファイルセット2、8081は2ターン処理で1。クロスインスタンス分離(turns-8080/claude vs turns-8081/codex)は成立。"
 severity: major
+resolved_by: 06-04（TurnIdAllocator + CR-01 単調非減少クランプ）
 note: |
-  クロスインスタンス分離（テストの直接の主張）は成立: 同一 turnId ...090456-080 が
-  turns-8080/claude/ と turns-8081/codex/ に別ファイル・別内容で並存、相互上書きなし。
-  ただし「並行実行時のコリジョン非発生」という一般主張は同一インスタンス内で破れる。
-  検証負荷は代表的な 2+2 並行（リテラルな 100 ターンは未実施）。
+  当初 issue: 同一インスタンス内で同一ミリ秒並行採番すると turnId が衝突していた。
+  06-04 で AppState 所有の TurnIdAllocator（単一直列化点）を導入し、衝突時に -<seq>
+  数値サフィックスを付与。さらにコードレビュー CR-01 で壁時計後退時の再発番を
+  単調非減少クランプ（base > last_base）で封じた。
+  自動テストで検証済み: N=1000 並行採番一意性（multi_thread ランタイム）= 重複 0、
+  backward-clock 再発番防止、全 turnId が ^[0-9-]+$ 適合。38/38 テスト green。
+  実機での 100 ターン並行再確認は任意（コード修正は自動テストで確証済み）。
 
 ### 3. /info status フィールドの busy/idle 遷移（WR-03 セマンティクス）
 expected: POST /prompt 直後の GET /info で status=busy、ターン完了後に status=idle。in_flight 方式（キュー投入時点で busy）が意図したロードバランサ契約に合っているか確認
@@ -44,7 +53,8 @@ note: |
 
 total: 3
 passed: 2
-issues: 1
+issues: 0
+resolved: 1
 pending: 0
 skipped: 0
 blocked: 0
@@ -52,7 +62,9 @@ blocked: 0
 ## Gaps
 
 - truth: "並行実行時にターンファイルのコリジョンが発生しない"
-  status: failed
+  status: resolved
+  resolved_by: 06-04
+  resolution: "AppState 所有 TurnIdAllocator を単一直列化点として導入し、同一ミリ秒衝突時に単調増加の数値サフィックス -<seq> を付与。CR-01 で壁時計後退時の再発番も base > last_base クランプで封止。N=1000 並行採番一意性テスト（multi_thread）+ backward-clock 回帰テストで検証。06-VERIFICATION.md で 9/9 must-haves VERIFIED。"
   reason: "ユーザ承認のもと実機テスト: 同一インスタンスへ同一ミリ秒に並行POSTすると turnId(YYYYMMDD-HHMMSS-mmm) が衝突し prompt/result/status ファイルが上書きされる。8080で3ターン処理に対しディスク上のファイルセットは2、8081で2ターン処理に対し1。クロスインスタンス分離(turns-8080/claude vs turns-8081/codex)は成立。"
   severity: major
   test: 2
