@@ -9,7 +9,10 @@
 # per-instance 規約（claude-p 準拠）:
 #   PID:      /tmp/ht-webif-${PORT}.pid
 #   LOG:      /tmp/ht-webif-${PORT}.log
-#   TURNS:    ${WEBIF_DIR}/turns-${PORT}/   （ポート間でターン成果物が混ざらない）
+#   TURNS:    ${WEBIF_DIR}/turns-${PORT}/${AGENT}/
+#             （WR-01: サーバは TURNS_DIR=turns-${PORT} に D-16 の <agent>/ を付与して
+#              turns-${PORT}/${AGENT}/ に書き込む。ポート分離は launcher が注入する
+#              turns-${PORT} の差で成立し、<agent>/ は D-16 が付ける実効サブディレクトリ。）
 
 set -euo pipefail
 
@@ -109,7 +112,9 @@ cmd_up() {
 
         local pid_file="/tmp/ht-webif-${port}.pid"
         local log_file="/tmp/ht-webif-${port}.log"
-        local turns_dir="${WEBIF_DIR}/turns-${port}"
+        # WR-01: サーバは TURNS_DIR(=turns-${port}) に D-16 の <agent>/ を付与する。
+        # 表示・報告には実効パス turns-${port}/${agent} を使う。
+        local turns_dir="${WEBIF_DIR}/turns-${port}/${agent}"
 
         log "起動中: agent=${agent} port=${port} turns_dir=${turns_dir}"
 
@@ -126,8 +131,9 @@ cmd_up() {
             fi
         fi
 
-        # turns ディレクトリを事前作成（ポート別: turns-${port}）
-        mkdir -p "${WEBIF_DIR}/turns-${port}"
+        # WR-01: turns ディレクトリの事前作成は不要（サーバが起動時に create_dir_all で
+        # turns-${port}/${agent} を作る）。launcher 側で turns-${port} だけ作っても
+        # サーバの実効パス turns-${port}/${agent} とずれるため、ここでは作らない。
 
         # extra_env を export した上でデーモン spawn（T-06-03: eval 不使用、export で逐次適用）
         (
@@ -289,7 +295,8 @@ cmd_status() {
 
         local pid_file="/tmp/ht-webif-${port}.pid"
         local log_file="/tmp/ht-webif-${port}.log"
-        local turns_dir="${WEBIF_DIR}/turns-${port}"
+        # WR-01: サーバの実効書き込み先は turns-${port}/${agent}（D-16）。
+        local turns_dir="${WEBIF_DIR}/turns-${port}/${agent}"
 
         echo "=== agent=${agent} port=${port} ==="
         echo "  TURNS_DIR: ${turns_dir}"
