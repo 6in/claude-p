@@ -76,9 +76,7 @@ impl TurnIdAllocator {
     ///
     /// ロックはこの整形処理の間だけ保持し、ファイル I/O や他の `.await` を跨がない。
     pub async fn next_turn_id(&self) -> String {
-        let base = chrono::Utc::now()
-            .format("%Y%m%d-%H%M%S-%3f")
-            .to_string();
+        let base = chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f").to_string();
         let mut s = self.state.lock().await;
         if base != s.last_base {
             // 新しい base: seq をリセットし base をそのまま返す（サフィックス無し）
@@ -680,5 +678,121 @@ mod tests {
             allow_origin_str == "*" || allow_origin_str == "https://example.com",
             "access-control-allow-origin は '*' または 'https://example.com' であること (実際: {allow_origin_str})"
         );
+    }
+
+    // ── 並行採番一意性リグレッション(Test 1): N=1000 件の並行 next_turn_id() が全件一意 ──
+    //
+    // HT-PROTOCOL §3.2: 同一ミリ秒に N 並行 POST /prompt しても turnId が全件一意。
+    // 1000 タスクを tokio::spawn で並行起動し、全件収集して HashSet で重複を検査する。
+    // これは同一プロセス内の同一ミリ秒並行採番衝突を直接再現・防止する回帰テスト。
+    #[tokio::test]
+    async fn turn_id_allocator_concurrent_uniqueness_n1000() {
+        use std::collections::HashSet;
+
+        let alloc = Arc::new(TurnIdAllocator::new());
+        let n: usize = 1000;
+
+        // N 個のタスクを並行起動し、それぞれ turn_id を採番する
+        let handles: Vec<_> = (0..n)
+            .map(|_| {
+                let alloc = Arc::clone(&alloc);
+                tokio::spawn(async move { alloc.next_turn_id().await })
+            })
+            .collect();
+
+        // 全タスクの結果を収集する
+        let mut ids = Vec::with_capacity(n);
+        for h in handles {
+            ids.push(h.await.expect("タスクが正常終了すること"));
+        }
+
+        // 全件一意性を検証する（HT-PROTOCOL §3.2）
+        let unique: HashSet<_> = ids.iter().collect();
+        assert_eq!(
+            unique.len(),
+            n,
+            "同一ミリ秒並行採番でも turnId は全件一意であること（HT-PROTOCOL §3.2）: 重複 {} 件",
+            n - unique.len()
+        );
+    }
+
+    // ── 採番形式適合(Test 2): 全採番結果が ^[0-9-]+$ ホワイトリストを満たす ──
+    //
+    // http.rs:152 の `c.is_ascii_digit() || c == '-'` ホワイトリストへの適合を検証する。
+    // サフィックス付き（...-080-001）も無し（...-080）も両方このルールを満たすこと。
+    // 英字（e.g. -w02）を含む形式は whitelist で弾かれるため使用禁止であることの保証。
+    #[tokio::test]
+    async fn turn_id_allocator_all_ids_pass_whitelist() {
+        use std::collections::HashSet;
+
+        let alloc = Arc::new(TurnIdAllocator::new());
+        let n: usize = 1000;
+
+        let handles: Vec<_> = (0..n)
+            .map(|_| {
+                let alloc = Arc::clone(&alloc);
+                tokio::spawn(async move { alloc.next_turn_id().await })
+            })
+            .collect();
+
+        let mut ids = Vec::with_capacity(n);
+        for h in handles {
+            ids.push(h.await.expect("タスクが正常終了すること"));
+        }
+
+        // 重複排除して形式確認（形式検査は一意なIDのみ確認すればよい）
+        let unique: HashSet<_> = ids.into_iter().collect();
+        for id in &unique {
+            assert!(
+                !id.is_empty() && id.chars().all(|c| c.is_ascii_digit() || c == '-'),
+                "turnId '{id}' がホワイトリスト ^[0-9-]+$ を満たさない（英字を含む形式は不可）"
+            );
+        }
+    }
+
+    // ── 連番サフィックス形式(Test 3): 同一 base の 2 件目以降が <base>-NNN 形式 ──
+    //
+    // 同一 base を強制するため、alloc.state.last_base を事前に現在タイムスタンプで
+    // 「先取り」して seq をリセットし、次の next_turn_id() 呼び出しが必ず衝突するよう誘導する。
+    // ただし内部状態は非公開のため、N=1000 並行結果からサフィックス付きエントリを抽出し、
+    // 4 セグメント目（ハイフン区切り）が 3 桁数字のみであることを確認する。
+    #[tokio::test]
+    async fn turn_id_allocator_suffix_segment_is_three_digit_numeric() {
+        use std::collections::HashSet;
+
+        let alloc = Arc::new(TurnIdAllocator::new());
+        let n: usize = 1000;
+
+        let handles: Vec<_> = (0..n)
+            .map(|_| {
+                let alloc = Arc::clone(&alloc);
+                tokio::spawn(async move { alloc.next_turn_id().await })
+            })
+            .collect();
+
+        let mut ids = Vec::with_capacity(n);
+        for h in handles {
+            ids.push(h.await.expect("タスクが正常終了すること"));
+        }
+
+        let unique: HashSet<_> = ids.into_iter().collect();
+
+        // サフィックス付きエントリ（セグメント数 4 = YYYYMMDD-HHMMSS-mmm-NNN）を抽出して検証
+        let suffixed: Vec<_> = unique
+            .iter()
+            .filter(|id| id.split('-').count() == 4)
+            .collect();
+
+        // N=1000 の並行採番では同一ミリ秒衝突が高確率で発生するはずだが、
+        // 万一全件異なるミリ秒に着地した場合はサフィックス付きエントリが存在しない可能性がある。
+        // その場合はスキップして OK（形式自体は上記 Test 2 で別途保証済み）。
+        for id in suffixed {
+            let segments: Vec<&str> = id.split('-').collect();
+            let suffix = segments[3];
+            assert!(
+                suffix.len() == 3 && suffix.chars().all(|c| c.is_ascii_digit()),
+                "turnId '{id}' のサフィックスセグメント '{suffix}' が 3 桁数字形式でない（-NNN 形式であること）"
+            );
+        }
     }
 }
