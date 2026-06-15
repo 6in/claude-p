@@ -100,7 +100,7 @@
 
 **Wave 2** *(blocked on Wave 1 — /info readiness に依存)*
 
-- [ ] 06-02-PLAN.md — 多重インスタンス・ランチャー: scripts/launch-agents.sh (up/down-all/status) + instances.conf + justfile レシピ（PARA-03/04）
+- [x] 06-02-PLAN.md — 多重インスタンス・ランチャー: scripts/launch-agents.sh (up/down-all/status) + instances.conf + justfile レシピ（PARA-03/04）
 
 **Wave 3** *(blocked on Wave 2 — launcher コマンドを文書化)*
 
@@ -115,7 +115,7 @@
 | 3. Testing & CI Automation | v1.0 | 6/6 | Complete | 2026-05-25 |
 | 4. Agent Profile Abstraction | v2.0 | 4/4 | Complete    | 2026-06-11 |
 | 5. Codex CLI and OpenCode Validation | v2.0 | 3/3 | Complete    | 2026-06-15 |
-| 6. Multi-Instance Parallel Foundation | v2.0 | 1/3 | In Progress|  |
+| 6. Multi-Instance Parallel Foundation | v2.0 | 2/3 | In Progress|  |
 
 ---
 *Roadmap created: 2026-05-23*

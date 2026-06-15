@@ -27,8 +27,8 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 - [x] **PARA-01**: `GET /info` が稼働中のエージェント名・port・status を JSON で返す
 - [x] **PARA-02**: `/info` が uptime・処理ターン数を含む
-- [ ] **PARA-03**: launcher script（`scripts/launch-agents.sh` 等）で複数インスタンス（エージェント×ポート）を一括起動し、`/info` ポーリングで起動確認できる
-- [ ] **PARA-04**: 複数インスタンスが `PORT`/`TURNS_DIR` 分離で衝突なく並列動作する（Codex の credential 分離 = per-instance `CODEX_HOME` 含め手順をドキュメント化）
+- [x] **PARA-03**: launcher script（`scripts/launch-agents.sh` 等）で複数インスタンス（エージェント×ポート）を一括起動し、`/info` ポーリングで起動確認できる
+- [x] **PARA-04**: 複数インスタンスが `PORT`/`TURNS_DIR` 分離で衝突なく並列動作する（Codex の credential 分離 = per-instance `CODEX_HOME` 含め手順をドキュメント化）
 
 ## Future Requirements
 
@@ -72,8 +72,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AGNT-04 | Phase 5 | Complete |
 | PARA-01 | Phase 6 | Complete |
 | PARA-02 | Phase 6 | Complete |
-| PARA-03 | Phase 6 | Pending |
-| PARA-04 | Phase 6 | Pending |
+| PARA-03 | Phase 6 | Complete |
+| PARA-04 | Phase 6 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 14 total
