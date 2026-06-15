@@ -1,42 +1,62 @@
 ---
-status: testing
+status: complete
 phase: 06-multi-instance-parallel-foundation
 source: [06-VERIFICATION.md]
 started: 2026-06-15T08:20:00Z
-updated: 2026-06-15T08:20:00Z
+updated: 2026-06-15T09:10:00Z
 ---
 
 ## Current Test
 
-number: 1
-name: 複数インスタンスを実際に同時起動し、各 /info が正しいエージェント名を返すことを確認
-expected: |
-  just up-all 実行後、curl localhost:8080/info が {"agent":"claude",...}、
-  curl localhost:8081/info が {"agent":"codex",...}、
-  curl localhost:8082/info が {"agent":"opencode",...} を返す
-awaiting: user response
+[testing complete]
 
 ## Tests
 
 ### 1. 複数インスタンス同時起動 — 各 /info が正しいエージェント名を返す
 expected: just up-all 実行後、curl localhost:8080/info → {"agent":"claude",...}、localhost:8081/info → {"agent":"codex",...}、localhost:8082/info → {"agent":"opencode",...}
-result: [pending]
+result: pass
+note: |
+  実機確認済み。8080→{"agent":"claude"}、8082→{"agent":"opencode"} は as-is で ready。
+  8081(codex) は instances.conf のプレースホルダ CODEX_HOME=/home/user/.codex-instance1
+  が未編集だったため初回失敗。実在の認証済み CODEX_HOME を与えると 8081→{"agent":"codex"}
+  で正常起動を確認。launcher は codex 失敗を飛ばして claude/opencode を起動し、最後に
+  非ゼロ終了（WR-04 設計どおり）。codex 失敗はコード欠陥ではなく一度の認証セットアップ手順。
 
 ### 2. 100 ターン並行実行時のターンファイルコリジョン非発生
 expected: 2インスタンス同時稼働中に各インスタンスへ 50 ターン投入しても、turns-8080/claude/ と turns-8081/codex/ が互いのファイルを上書きしない
-result: [pending]
+result: issue
+reported: "同一インスタンスへ同一ミリ秒に並行POSTすると turnId(YYYYMMDD-HHMMSS-mmm) が衝突し、prompt/result/status が上書きされる。8080は3ターン処理でディスク上ファイルセット2、8081は2ターン処理で1。クロスインスタンス分離(turns-8080/claude vs turns-8081/codex)は成立。"
+severity: major
+note: |
+  クロスインスタンス分離（テストの直接の主張）は成立: 同一 turnId ...090456-080 が
+  turns-8080/claude/ と turns-8081/codex/ に別ファイル・別内容で並存、相互上書きなし。
+  ただし「並行実行時のコリジョン非発生」という一般主張は同一インスタンス内で破れる。
+  検証負荷は代表的な 2+2 並行（リテラルな 100 ターンは未実施）。
 
 ### 3. /info status フィールドの busy/idle 遷移（WR-03 セマンティクス）
 expected: POST /prompt 直後の GET /info で status=busy、ターン完了後に status=idle。in_flight 方式（キュー投入時点で busy）が意図したロードバランサ契約に合っているか確認
-result: [pending]
+result: pass
+note: |
+  実機確認済み。idle → POST /prompt 直後に busy（投入時点で busy = in_flight/WR-03）
+  → 完了後 idle、turns_processed 0→1、turn ファイルは turns-8080/claude/ に出力。
 
 ## Summary
 
 total: 3
-passed: 0
-issues: 0
-pending: 3
+passed: 2
+issues: 1
+pending: 0
 skipped: 0
 blocked: 0
 
 ## Gaps
+
+- truth: "並行実行時にターンファイルのコリジョンが発生しない"
+  status: failed
+  reason: "ユーザ承認のもと実機テスト: 同一インスタンスへ同一ミリ秒に並行POSTすると turnId(YYYYMMDD-HHMMSS-mmm) が衝突し prompt/result/status ファイルが上書きされる。8080で3ターン処理に対しディスク上のファイルセットは2、8081で2ターン処理に対し1。クロスインスタンス分離(turns-8080/claude vs turns-8081/codex)は成立。"
+  severity: major
+  test: 2
+  root_cause: ""
+  artifacts: []
+  missing: []
+  debug_session: ""
