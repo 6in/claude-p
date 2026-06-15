@@ -124,7 +124,14 @@ bash "$SCRIPT_DIR/setup-opencode.sh"
 # --- サーバ起動 ---
 cd "$WEBIF_DIR"
 log "ビルド + 起動中... (AGENT=opencode, PORT=${PORT}, ログ: $LOG_FILE)"
-AGENT=opencode PORT="$PORT" TURNS_DIR="./turns" cargo run --release >"$LOG_FILE" 2>&1 &
+# WR-05: TURNS_DIR は意図的に "./turns"（プロジェクトルート相対）に固定する。
+#   理由: e2e-codex.sh と対称に保つため + main.rs:37 の turns_base.join(&agent_name) が
+#   "./turns" を "./turns/opencode" に展開する（D-16）。この per-agent サフィックス付与は
+#   別箇所で行われる隠れた結合のため、ここでルート内に着地させる "./turns" を明示的に強制する。
+#   これは .env の TURNS_DIR 設定を上書きする点に注意（下でログ出力）。
+EFFECTIVE_TURNS_DIR="./turns"
+log "E2E は TURNS_DIR=${EFFECTIVE_TURNS_DIR} を強制（D-16: opencode は ./turns/opencode に展開。.env の値は上書きされる）"
+AGENT=opencode PORT="$PORT" TURNS_DIR="$EFFECTIVE_TURNS_DIR" cargo run --release >"$LOG_FILE" 2>&1 &
 CARGO_PID=$!
 
 # --- 起動待機（最大 60 秒）---

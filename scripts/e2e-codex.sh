@@ -112,7 +112,15 @@ fi
 # --- サーバ起動 ---
 cd "$WEBIF_DIR"
 log "ビルド + 起動中... (AGENT=codex, PORT=${PORT}, ログ: $LOG_FILE)"
-AGENT=codex PORT="$PORT" TURNS_DIR="./turns" cargo run --release >"$LOG_FILE" 2>&1 &
+# WR-05: TURNS_DIR は意図的に "./turns"（プロジェクトルート相対）に固定する。
+#   理由: Codex は lean-ctx MCP hooks によりプロジェクトルート外のファイル読み取りを拒否する
+#   （agents/codex.toml:16-19）。/tmp 等の外部パスを使うと "path escapes project root" になる。
+#   main.rs:37 の turns_base.join(&agent_name) が "./turns" を "./turns/codex" に展開する（D-16）。
+#   この per-agent サフィックス付与は別箇所で行われる隠れた結合のため、ここでルート内に着地させる
+#   "./turns" を明示的に強制する。これは .env の TURNS_DIR 設定を上書きする点に注意（下でログ出力）。
+EFFECTIVE_TURNS_DIR="./turns"
+log "E2E は TURNS_DIR=${EFFECTIVE_TURNS_DIR} を強制（D-16: codex は ./turns/codex に展開。.env の値は上書きされる）"
+AGENT=codex PORT="$PORT" TURNS_DIR="$EFFECTIVE_TURNS_DIR" cargo run --release >"$LOG_FILE" 2>&1 &
 CARGO_PID=$!
 
 # --- 起動待機（最大 60 秒）---
