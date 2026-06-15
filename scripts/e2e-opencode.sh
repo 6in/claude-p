@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # e2e-opencode.sh — OpenCode エージェントの E2E 検証スクリプト。
 #
-# ht-webif を AGENT=opencode PORT=8082 で起動し、次の 3 段階を検証する:
+# ht-webif を AGENT=opencode PORT=8082 で起動し、次の段階を検証する:
 #   1. 基本 E2E (AGNT-03): POST /prompt → result 非空 + status=done
-#   2. 履歴シード (ターン1): 固有の数値を記憶させる
-#   3. fresh 履歴隔離 (AGNT-04 + D-10): fresh:true で前ターンの情報が漏れないことを確認
+#   2. 履歴シード（ターン1）: 固有の数値を記憶させる
+#   2.5. 正の対照実験: 非 fresh で秘密数値を質問 → UNKNOWN を期待（D-09 アーキテクチャ上の継続性なし）
+#   3. fresh 履歴隔離 (AGNT-04 + D-10): fresh:true で Worker::recreate() が実際に発火したことを
+#       サーバログ（[shared-fate] 再生成行）で証明する
 #
 # fresh_mode 確定結果（D-01/D-02 — 2026-06-12 実機試行）:
 #   D-01: /new を試行 → 05-RESEARCH.md Pattern 3 が予測するとおり、/new はエージェント選択
@@ -13,13 +15,12 @@
 #   D-02: respawn にフォールバック確定。respawn は Phase 4 で実装・テスト済みのパス。
 #         agents/opencode.toml: fresh_mode = "respawn"（確定値）
 #
-# 段階 3 の方法論的注意（05-01-SUMMARY.md より — agentic CLI 共通の FALSE POSITIVE 対策）:
-#   OpenCode は対話型エージェント CLI であり、ワークスペース検索を自律的に実行できる。
-#   段階 2 の秘密数値 7331 は turns/ 配下のプロンプトファイルに平文で保存されるため、
-#   単純な「以前伝えた秘密の数値は何ですか？」という質問を送ると OpenCode がファイル
-#   検索で 7331 を発見し、会話履歴の漏洩と誤判定されてしまう（Codex と同じ問題）。
-#   この FALSE POSITIVE を防ぐため、段階 3 のプロンプトにはファイル読み取り・検索を
-#   明示的に禁止する制約を付与する。この制約がなければテスト自体が無効となる。
+# AGNT-04 falsifiability（05-03-PLAN.md — gap-closure）:
+#   D-09 アーキテクチャ（opencode run --command turn ラッパー）では各ターンが独立した会話となる。
+#   そのため、段階 2 でシードした 7331 は段階 3 前に必ず破棄される。
+#   「7331 が漏れない」チェックは fresh_mode=respawn が壊れていても必ず PASS するため空洞。
+#   代替検証: 段階 3 で fresh:true ターン前後の [shared-fate] 再生成行数を比較し、
+#   Worker::recreate() が実際に発火したことを証明する（respawn 機構が壊れれば増分 0 で FAIL）。
 #
 # 前提条件:
 #   - opencode が PATH 上にあること
@@ -81,7 +82,7 @@ cleanup() {
         log "失敗ログ (末尾 40 行):"
         tail -n 40 "$LOG_FILE" >&2
     fi
-    # 成功時はログファイルを削除する
+    # 成功時はログファイルを削除する（recreate_after は成功時 cleanup 前に記録済み）
     if [[ $rc -eq 0 ]] && [[ -f "$LOG_FILE" ]]; then
         rm -f "$LOG_FILE"
     fi
@@ -173,15 +174,16 @@ turn_id1=$(echo "$response1" | jq -r '.turn_id // "unknown"')
 log "段階 1 結果: turnId=${turn_id1}, status=${status1}, 所要時間=${T1_ELAPSED}s"
 log "段階 1 result 先頭 100 文字: $(echo "$result1" | head -c 100)"
 
-if [[ "$status1" == "timeout" ]] || [[ "$status1" == "failed" ]]; then
-    log "ERROR: 段階 1 失敗 (status=${status1}) — result: $(echo "$result1" | head -c 200)"
+# WR-01: status=done allowlist — status が done 以外はすべて失敗（unknown/timeout/failed を含む）
+if [[ "$status1" != "done" ]]; then
+    log "ERROR: 段階 1 失敗 (status=${status1}, 期待値 done) — result: $(echo "$result1" | head -c 200)"
     exit 1
 fi
 if [[ -z "$result1" ]]; then
     log "ERROR: 段階 1 失敗 — result が空"
     exit 1
 fi
-log "OK: 段階 1 通過 (result 非空 + status=${status1})"
+log "OK: 段階 1 通過 (result 非空 + status=done)"
 
 # --- 段階 2: 履歴シード（ターン1）---
 log "=== 段階 2: 履歴シード ==="
@@ -201,24 +203,81 @@ status2=$(echo "$response2" | jq -r '.status // "unknown"')
 turn_id2=$(echo "$response2" | jq -r '.turn_id // "unknown"')
 log "段階 2 結果: turnId=${turn_id2}, status=${status2}, 所要時間=${T2_ELAPSED}s"
 
-if [[ "$status2" == "timeout" ]] || [[ "$status2" == "failed" ]]; then
-    log "ERROR: 段階 2 失敗 (status=${status2})"
+# WR-01: status=done allowlist
+if [[ "$status2" != "done" ]]; then
+    log "ERROR: 段階 2 失敗 (status=${status2}, 期待値 done)"
     exit 1
 fi
 log "OK: 段階 2 通過 (履歴シード完了)"
 
-# --- 段階 3: fresh 履歴隔離（AGNT-04 + D-10）---
-log "=== 段階 3: fresh 履歴隔離 (AGNT-04 + D-10) ==="
-log "プロンプト送信: fresh:true + ファイル検索禁止で秘密の数値を質問（7331 が漏れないことを確認）"
+# --- 段階 2.5: 正の対照実験（非 fresh — D-09 アーキテクチャの継続性欠如を実機で記録）---
+log "=== 段階 2.5: 正の対照実験（非 fresh での会話継続性確認）==="
 #
-# ファイル検索禁止プロンプトが必要な理由（agentic CLI 共通 — 05-01-SUMMARY.md より）:
-#   OpenCode も Codex と同様、ワークスペース検索を自律実行できるエージェント CLI である。
-#   段階 2 の 7331 は turns/opencode/ 配下のプロンプトファイルに平文で残る。
-#   単純な質問を送ると OpenCode がファイル検索で 7331 を発見し、会話履歴漏洩と誤判定される。
-#   明示的な禁止制約で「会話記憶のみ」での回答を強制することでテストの正しい意味論を保証する。
-#   fresh_mode = "respawn" は完全プロセス再起動であり、会話履歴は確実にリセットされる。
+# 目的: D-09 ラッパー方式（opencode run --command turn）では各ターンが独立した会話となり、
+# 非 fresh ターン間にも会話継続性が存在しないことを実機で確認・記録する。
+# これにより「段階 2→3 単独では 7331 非出現は隔離の証拠にならない」理由を明示する。
+# UNKNOWN が返ることが期待値。7331 が返れば会話継続性ではなくファイル検索由来の疑いがある。
+#
+STAGE25_PROMPT='ファイルの読み取り・検索・シェルコマンド実行を一切せず、この会話のこれまでの記憶だけで答えてください。私が以前伝えた秘密の数値は何ですか？知らない場合は UNKNOWN とだけ書いてください。'
+
+T25_START=$(date +%s)
+STAGE25_JSON=$(echo '{}' | jq --arg p "$STAGE25_PROMPT" '{prompt: $p, wait: true}')
+response25=""
+if ! response25=$(curl -s --max-time 720 -X POST "$BASE_URL/prompt" \
+    -H 'Content-Type: application/json' \
+    -d "$STAGE25_JSON"); then
+    log "ERROR: curl 失敗（段階 2.5）"
+    exit 1
+fi
+T25_END=$(date +%s)
+T25_ELAPSED=$(( T25_END - T25_START ))
+
+status25=$(echo "$response25" | jq -r '.status // "unknown"')
+result25=$(echo "$response25" | jq -r '.result // ""')
+turn_id25=$(echo "$response25" | jq -r '.turn_id // "unknown"')
+
+log "段階 2.5 結果: turnId=${turn_id25}, status=${status25}, 所要時間=${T25_ELAPSED}s"
+log "段階 2.5 result 先頭 100 文字: $(echo "$result25" | head -c 100)"
+
+# WR-01: status=done allowlist
+if [[ "$status25" != "done" ]]; then
+    log "ERROR: 段階 2.5 失敗 (status=${status25}, 期待値 done)"
+    exit 1
+fi
+
+# 段階 2.5 の意味論: 期待値は UNKNOWN（D-09 アーキテクチャ上の継続性欠如）
+if echo "$result25" | grep -qi "UNKNOWN"; then
+    log "INFO: 段階 2.5 — UNKNOWN を確認（期待値）。D-09 ラッパー方式では非 fresh でも前ターンの記憶がない。"
+elif echo "$result25" | grep -q "7331"; then
+    log "WARNING: 段階 2.5 — result に 7331 が含まれる。これは会話継続性ではなくファイル検索由来の可能性が高い。"
+    log "  段階 2.5 はテスト失敗にしないが、ファイル検索禁止制約の有効性を確認すること。"
+else
+    log "INFO: 段階 2.5 — UNKNOWN でも 7331 でもないレスポンス（継続性なしとして記録）。"
+fi
+
+# D-09 アーキテクチャ上の重要な注記: このログ行が段階 2→3 の隔離証明の限界を明示する
+log "注: OpenCode は D-09 アーキテクチャ上、非 fresh でも前ターンを記憶しない。"
+log "    よって段階 2→3 の 7331 非出現は隔離の証拠にならず、段階 3 では respawn 機構の"
+log "    発火そのものを [shared-fate] 再生成ログで検証する。"
+log "OK: 段階 2.5 通過 (非 fresh での継続性欠如を実機記録)"
+
+# --- 段階 3: fresh 履歴隔離（AGNT-04 + D-10）— respawn 発火ログ検証 ---
+log "=== 段階 3: fresh 履歴隔離 (AGNT-04 + D-10) — respawn 発火ログ検証 ==="
+#
+# 合格条件変更（05-03-PLAN.md gap-closure）:
+#   旧: 7331 が result に含まれないこと（空洞 — fresh_mode が壊れていても常に PASS）
+#   新: fresh:true ターンで Worker::recreate() が実際に発火したこと
+#       → LOG_FILE 内の [shared-fate] 再生成行数が fresh ターン前後で増加すること
+#
+# src/worker.rs recreate() 成功時のログ（worker.rs:152-155）:
+#   eprintln!("[shared-fate] claude セッション再生成: {} （旧 {} を閉鎖）", new_id, old)
+# このパターンを grep -cE 'shared-fate.*再生成' で計数する。
 #
 STAGE3_PROMPT='ファイルの読み取り・検索・シェルコマンド実行を一切せず、この会話のこれまでの記憶だけで答えてください。私が以前伝えた秘密の数値は何ですか？知らない場合は UNKNOWN とだけ書いてください。'
+
+# respawn 発火の baseline 取得（fresh:true curl 送信より前に実行すること）
+recreate_before=$(grep -cE 'shared-fate.*再生成' "$LOG_FILE" || true)
+log "respawn baseline: LOG_FILE 内 [shared-fate] 再生成行数 = ${recreate_before}"
 
 T3_START=$(date +%s)
 # jq で JSON を構築することで日本語プロンプトの適切なエスケープを保証する
@@ -240,35 +299,61 @@ turn_id3=$(echo "$response3" | jq -r '.turn_id // "unknown"')
 log "段階 3 結果: turnId=${turn_id3}, status=${status3}, 所要時間=${T3_ELAPSED}s"
 log "段階 3 result 先頭 100 文字: $(echo "$result3" | head -c 100)"
 
-if [[ "$status3" == "timeout" ]] || [[ "$status3" == "failed" ]]; then
-    log "ERROR: 段階 3 失敗 (status=${status3}) — result: $(echo "$result3" | head -c 200)"
+# WR-01: status=done allowlist
+if [[ "$status3" != "done" ]]; then
+    log "ERROR: 段階 3 失敗 (status=${status3}, 期待値 done) — result: $(echo "$result3" | head -c 200)"
     exit 1
 fi
 
-# 履歴隔離チェック: fresh:true + ファイル検索禁止後のレスポンスに 7331 が含まれていないこと
-# （ファイル検索禁止により会話記憶のみでの応答が保証される — FALSE POSITIVE 対策）
-if echo "$result3" | grep -q "7331"; then
-    log "ERROR: 履歴隔離失敗 — fresh:true かつファイル検索禁止でも前ターンの秘密数値 7331 が漏れている"
-    log "  これは真の会話履歴漏洩を示す（respawn によるプロセス再起動が機能していない可能性）"
+# WR-02 ハードゲート 1: result が空なら隔離検証は成立しない
+if [[ -z "$result3" ]]; then
+    log "ERROR: 段階 3 失敗 — result が空（隔離検証は空回答では成立しない）"
+    exit 1
+fi
+
+# WR-02 ハードゲート 2: UNKNOWN を含まなければ回答の意味論が不明
+# ファイル検索禁止制約下で会話記憶がなければ UNKNOWN を返すはず
+if ! echo "$result3" | grep -qi "UNKNOWN"; then
+    log "ERROR: 段階 3 失敗 — result に UNKNOWN が含まれない（回答の意味論が不明）"
     log "  result3: $(echo "$result3" | head -c 300)"
     exit 1
 fi
 
-# 追加確認: UNKNOWN を含む場合は隔離成功の強い証拠
-if echo "$result3" | grep -qi "UNKNOWN"; then
-    log "INFO: 段階 3 — result に UNKNOWN を含む（会話記憶なし = 隔離成立の強い証拠）"
+# 補助確認: 7331 が含まれていれば respawn が機能していない（true isolation failure）
+if echo "$result3" | grep -q "7331"; then
+    log "ERROR: 段階 3 失敗 — fresh:true かつファイル検索禁止でも前ターンの秘密数値 7331 が漏れている"
+    log "  これは respawn によるプロセス再起動が機能していない可能性を示す"
+    log "  result3: $(echo "$result3" | head -c 300)"
+    exit 1
 fi
 
-log "OK: 段階 3 通過 (fresh:true + ファイル検索禁止で 7331 が含まれない — 履歴隔離成立)"
+# メインゲート: fresh:true ターンで Worker::recreate() が発火したことを LOG_FILE で証明する
+# wait:true が返った時点で処理完了 = recreate ログ出力済み（cleanup による LOG_FILE 削除前）
+recreate_after=$(grep -cE 'shared-fate.*再生成' "$LOG_FILE" || true)
+log "respawn 発火確認: LOG_FILE 内 [shared-fate] 再生成行数 = before=${recreate_before} / after=${recreate_after}"
+
+if [[ "$recreate_after" -le "$recreate_before" ]]; then
+    log "ERROR: 段階 3 失敗 — fresh:true ターンで Worker::recreate() が発火しなかった"
+    log "  before=${recreate_before}, after=${recreate_after}（増分ゼロ）"
+    log "  agents/opencode.toml の fresh_mode=respawn が有効に機能していないことを示す"
+    log "  respawn 機構が壊れているか、fresh フラグが無視されている可能性がある"
+    exit 1
+fi
+
+log "OK: 段階 3 通過 — fresh:true で Worker::recreate() が発火 (before=${recreate_before} → after=${recreate_after})"
+log "    respawn 機構（AGNT-04）が実際に動作していることをサーバログで証明"
 
 # --- 最終サマリー ---
 log ""
 log "=== E2E 検証サマリー ==="
 log "段階 1 (AGNT-03): turnId=${turn_id1}, 所要時間=${T1_ELAPSED}s, status=${status1} — PASS"
 log "段階 2 (履歴シード): turnId=${turn_id2}, 所要時間=${T2_ELAPSED}s, status=${status2} — PASS"
+log "段階 2.5 (正の対照): turnId=${turn_id25}, 所要時間=${T25_ELAPSED}s, status=${status25} — PASS（継続性欠如を実機記録）"
 log "段階 3 (AGNT-04): turnId=${turn_id3}, 所要時間=${T3_ELAPSED}s, status=${status3} — PASS"
+log "  respawn 発火証明: [shared-fate] 再生成行 before=${recreate_before} → after=${recreate_after}（増分 $(( recreate_after - recreate_before ))）"
 log ""
 log "fresh_mode 確定値: respawn（/new はエージェント選択ダイアログのため不採用 — D-01/D-02）"
+log "AGNT-04 検証方式: Worker::recreate() 発火ログ検証（respawn が壊れれば必ず FAIL — 05-03 gap-closure）"
 log ""
-log "OK: OpenCode E2E 完了 — AGNT-03 (result/status ファイル) + AGNT-04 (fresh:true 履歴隔離) 検証済み"
+log "OK: OpenCode E2E 完了 — AGNT-03 (result/status ファイル) + AGNT-04 (respawn 発火証明) 検証済み"
 exit 0
