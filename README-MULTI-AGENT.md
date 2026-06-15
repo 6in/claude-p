@@ -228,6 +228,50 @@ launch-agents.sh up   # PATH 上の ht-webif を起動、turns は ./turns-8080/
 各インスタンスは `turns-<port>/<agent>/` という別ディレクトリに書き込むため、
 インスタンス間で turn ファイルが衝突することはありません（`TURNS_DIR` 分離で自動保証）。
 
+### 各インスタンスへプロンプトを送る
+
+`launch-agents.sh up` で起動した各インスタンスは、**それぞれ別ポートで独立した ht-webif**
+です。プロンプト送信は通常の単一インスタンスと同じく `POST /prompt` を**該当ポート宛**に
+投げるだけ。「どのエージェントに送るか」はポート番号で選びます（`instances.conf` の port 列）。
+
+デフォルトの 3 インスタンス構成（claude=8080 / codex=8081 / opencode=8082）の例:
+
+```bash
+# Claude（8080）へ — 非同期（既定）: turn_id を即返す
+curl -s -X POST http://127.0.0.1:8080/prompt \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt": "Rust とは何か 100 字で"}'
+# → {"turn_id":"20260616-103045-123","status":"accepted"}
+
+# Codex（8081）へ — 同期: 完了まで待って結果を返す
+curl -s -X POST http://127.0.0.1:8081/prompt \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt": "2 + 2 は？", "wait": true}'
+# → {"turn_id":"...","status":"completed","result":"4 です。"}
+
+# OpenCode（8082）へ — fresh: 実行前に文脈リセット（-p 相当の一発実行）
+curl -s -X POST http://127.0.0.1:8082/prompt \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt": "今日の日付は？", "fresh": true, "wait": true}'
+```
+
+非同期で投げた場合は、返ってきた `turn_id` で結果を回収します（送ったポートと同じポートへ）:
+
+```bash
+curl -s http://127.0.0.1:8080/turns/20260616-103045-123
+# status が "done" になれば result が読める
+```
+
+ポイント:
+- **エージェントの選択 = ポートの選択。** 同じ `{"prompt": ...}` ボディを宛先ポートだけ変えて投げ分ける。
+- ターン成果物は各インスタンスの `./turns-<port>/<agent>/` に分離して書き出される（混線しない）。
+- リクエスト/レスポンスの全仕様（`fresh` / `wait`、`GET /turns/{turn_id}`、`POST /command`、
+  `POST /restart`）は [README.md の API セクション](README.md#api) を参照。マルチインスタンスでも
+  エンドポイントの挙動は単一インスタンスと同一で、違いは「ポートで宛先エージェントを選ぶ」点だけ。
+
+> ロードバランス例: 送信前に各ポートの `GET /info` を見て `status:"idle"` のインスタンスを
+> 選べば、空いているエージェントへ振り分けられます（`status` セマンティクスは §4 参照）。
+
 ---
 
 ## 6. turnId 採番の一意化 — Phase 6（06-04 ギャップクローズ）
