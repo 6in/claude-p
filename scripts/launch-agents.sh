@@ -76,6 +76,20 @@ check_info_agent() {
 cmd_up() {
     log "instances.conf からインスタンスを起動します: ${INSTANCES_CONF}"
 
+    # CR-01: cargo run ラッパーではなくビルド済みバイナリを直接起動するため、
+    # ループ前に一度だけリリースビルドする。これにより $! が実サーバの PID になり、
+    # down-all の SIGTERM が cargo ラッパーではなく ht-webif 本体に届く。
+    local server_bin="${WEBIF_DIR}/target/release/ht-webif"
+    log "リリースビルド中: ${server_bin}"
+    if ! (cd "$WEBIF_DIR" && cargo build --release) >&2; then
+        log "ERROR: cargo build --release に失敗しました"
+        exit 1
+    fi
+    if [[ ! -x "$server_bin" ]]; then
+        log "ERROR: ビルド済みバイナリが見つかりません: ${server_bin}"
+        exit 1
+    fi
+
     while IFS= read -r line || [[ -n "$line" ]]; do
         # コメント行と空行をスキップ
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -130,9 +144,11 @@ cmd_up() {
                     fi
                 done <<< "$(echo "$extra_tokens" | tr ' ' '\n')"
             fi
-            # TURNS_DIR を turns-${port} として spawn（D-16: ポート別 turns ディレクトリ分離）
+            # CR-01: ビルド済みバイナリを直接 spawn する（cargo run ラッパーを挟まない）。
+            # $! は ht-webif 本体の PID になり、down-all の SIGTERM/SIGKILL が確実に届く。
+            # TURNS_DIR を turns-${port} として spawn（D-16: ポート別 turns ディレクトリ分離）。
             nohup env PORT="${port}" TURNS_DIR="${WEBIF_DIR}/turns-${port}" AGENT="${agent}" \
-                cargo run --release >"${log_file}" 2>&1 &
+                "$server_bin" >"${log_file}" 2>&1 &
             local pid=$!
             echo "$pid" > "${pid_file}"
             disown "$pid"
