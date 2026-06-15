@@ -93,6 +93,10 @@ cmd_up() {
         exit 1
     fi
 
+    # WR-04: インスタンス単位の失敗を集計し、ループは中断せず最後にまとめて非ゼロ終了する。
+    # これで「起動できるインスタンスは起動し、失敗したものだけ報告する」挙動になる。
+    local failures=0
+
     while IFS= read -r line || [[ -n "$line" ]]; do
         # コメント行と空行をスキップ
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -177,8 +181,9 @@ cmd_up() {
         done
 
         if [[ -z "$pid" ]]; then
-            log "ERROR: PID ファイルが作成されませんでした: ${pid_file}"
-            exit 1
+            log "ERROR: PID ファイルが作成されませんでした: ${pid_file} (agent=${agent} port=${port})"
+            failures=$((failures + 1))
+            continue
         fi
 
         log "  PID: ${pid} — readiness 待機中（最大 60s）..."
@@ -194,7 +199,10 @@ cmd_up() {
                     tail -n 20 "$log_file" >&2
                 fi
                 rm -f "$pid_file"
-                exit 1
+                # WR-04: このインスタンスを失敗としてカウントし、for を抜けて次のインスタンスへ
+                # （continue 2 で while ループの次イテレーションへ）。
+                failures=$((failures + 1))
+                continue 2
             fi
 
             if check_info_agent "$port" "$agent"; then
@@ -214,10 +222,18 @@ cmd_up() {
                 log "ログ末尾 20 行:"
                 tail -n 20 "$log_file" >&2
             fi
-            exit 1
+            # WR-04: 失敗としてカウントして次のインスタンスへ。
+            failures=$((failures + 1))
+            continue
         fi
 
     done < "$INSTANCES_CONF"
+
+    # WR-04: 1件でも失敗があれば最後に非ゼロ終了する（成功分は起動済み）。
+    if [[ $failures -gt 0 ]]; then
+        log "ERROR: ${failures} 件のインスタンスが起動に失敗しました"
+        exit 1
+    fi
 
     log "全インスタンス起動完了"
 }
