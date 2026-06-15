@@ -92,7 +92,7 @@
   3. 複数インスタンスが同時に稼働中に 100 ターンを並行実行しても、ターンファイルのコリジョンが発生しない（`TURNS_DIR` 分離で自動保証）
   4. README.md に多重インスタンス起動手順・CODEX_HOME 分離手順・クレデンシャル分離ガイドが記載されている
 
-**Plans**: 3 plans
+**Plans**: 4 plans (3 original + 1 gap closure)
 
 **Wave 1**
 
@@ -105,6 +105,10 @@
 **Wave 3** *(blocked on Wave 2 — launcher コマンドを文書化)*
 
 - [x] 06-03-PLAN.md — README 多重インスタンス起動手順 + CODEX_HOME 分離 + クレデンシャル分離ガイド（PARA-04）
+
+**Gap Closure** *(UAT ギャップ修正 — 06-UAT.md Test 2)*
+
+- [ ] 06-04-PLAN.md — turnId 採番一意化: TurnIdAllocator + HT-PROTOCOL §3.2 -<seq> 連番ガード + 並行採番一意性テスト（PARA-03）
 
 ## Progress
 
