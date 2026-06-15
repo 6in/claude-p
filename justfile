@@ -47,6 +47,18 @@ clippy:
 clean:
     cargo clean
 
+# 全インスタンスを起動する（instances.conf ドリブン、readiness は /info agent 名一致まで待つ）
+up-all:
+    bash scripts/launch-agents.sh up
+
+# 全インスタンスを停止する（SIGTERM → SIGKILL）
+down-all:
+    bash scripts/launch-agents.sh down-all
+
+# 各インスタンスの /info を叩いて状態を表示する
+agents-status:
+    bash scripts/launch-agents.sh status
+
 # docker と cross の存在を fail-fast チェック
 dist-check-tools:
     @command -v docker >/dev/null 2>&1 || { \
