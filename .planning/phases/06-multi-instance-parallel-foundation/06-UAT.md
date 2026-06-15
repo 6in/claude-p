@@ -1,5 +1,5 @@
 ---
-status: complete
+status: diagnosed
 phase: 06-multi-instance-parallel-foundation
 source: [06-VERIFICATION.md]
 started: 2026-06-15T08:20:00Z
@@ -56,7 +56,17 @@ blocked: 0
   reason: "ユーザ承認のもと実機テスト: 同一インスタンスへ同一ミリ秒に並行POSTすると turnId(YYYYMMDD-HHMMSS-mmm) が衝突し prompt/result/status ファイルが上書きされる。8080で3ターン処理に対しディスク上のファイルセットは2、8081で2ターン処理に対し1。クロスインスタンス分離(turns-8080/claude vs turns-8081/codex)は成立。"
   severity: major
   test: 2
-  root_cause: ""
-  artifacts: []
-  missing: []
-  debug_session: ""
+  root_cause: "src/http.rs:92 — prompt_handler が turnId をミリ秒精度タイムスタンプ chrono::Utc::now().format(\"%Y%m%d-%H%M%S-%3f\") のみで採番し一意性ガードが無い。同一ミリ秒に並行着信した async ハンドラが同一文字列を生成 → 同一の prompt/result/status パスへ書き込み worker が上書き。HT-PROTOCOL §3.2 が要求する衝突時 -<seq> 連番ガードが未実装。直列 worker モデル(§12)は実行を直列化するが採番は HTTP 着信時で並行のため衝突は enqueue 時点で確定。"
+  artifacts:
+    - path: "src/http.rs:92"
+      issue: "turnId をタイムスタンプのみで採番、一意性ガード無し（衝突時 -<seq> 未実装）"
+    - path: "src/turn.rs:17-20,44-45,119,130-131"
+      issue: "turn_id を verbatim でパス構築に使用。id が一意なら変更不要"
+    - path: "HT-PROTOCOL.md §3.1/§3.2/§12"
+      issue: "コードが満たすべき -<seq> 衝突ガード仕様。コードが未実装"
+  missing:
+    - "prompt_handler（または AppState 所有の共有アロケータ）で turnId 採番を原子化し衝突耐性を持たせる"
+    - "HT-PROTOCOL §3.2 準拠で、base タイムスタンプ衝突時に単調増加の数値サフィックス -<seq>（例 ...-080-001）を付与"
+    - "per-instance の last-issued-id 状態 + AtomicU64/短い Mutex を単一直列化点にし、並行ハンドラが同一 prior state を読めないようにする"
+    - "サフィックスは数値+ハイフンのみとし既存の ^[0-9-]+$ ホワイトリスト(http.rs:152)を壊さない（-w<workerId> の文字形式は不可）"
+  debug_session: ".planning/debug/turnid-collision.md"
