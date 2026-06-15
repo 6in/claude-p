@@ -236,6 +236,17 @@ if [[ "$status3" == "timeout" ]] || [[ "$status3" == "failed" ]]; then
     exit 1
 fi
 
+# WR-03: 段階 3 の隔離アサーションを e2e-opencode.sh と同等の厳密さにする。
+# fresh_mode=command（/clear）の文脈リセットは result テキストからは観測できない
+# （respawn のようにログで発火を証明できない）ため、result テキストのハードゲートが
+# 利用可能な最強のシグナルとなる。空回答や 7331 を単に省いた回答での空洞 PASS を防ぐ。
+
+# WR-03 ハードゲート 1: result が空なら隔離検証は成立しない
+if [[ -z "$result3" ]]; then
+    log "ERROR: 段階 3 失敗 — result が空（隔離検証は空回答では成立しない）"
+    exit 1
+fi
+
 # 履歴隔離チェック: fresh:true + ファイル検索禁止後のレスポンスに 7331 が含まれていないこと
 # （ファイル検索禁止により会話記憶のみでの応答が保証される — 上記 FALSE POSITIVE 対策参照）
 if echo "$result3" | grep -q "7331"; then
@@ -245,12 +256,15 @@ if echo "$result3" | grep -q "7331"; then
     exit 1
 fi
 
-# 追加確認: UNKNOWN を含む場合は隔離成功の強い証拠
-if echo "$result3" | grep -qi "UNKNOWN"; then
-    log "INFO: 段階 3 — result に UNKNOWN を含む（会話記憶なし = 隔離成立の強い証拠）"
+# WR-03 ハードゲート 2: UNKNOWN を含まなければ回答の意味論が不明
+# ファイル検索禁止制約下で会話記憶がなければ UNKNOWN を返すはず（INFO ではなく必須化）
+if ! echo "$result3" | grep -qi "UNKNOWN"; then
+    log "ERROR: 段階 3 失敗 — result に UNKNOWN が含まれない（回答の意味論が不明）"
+    log "  result3: $(echo "$result3" | head -c 300)"
+    exit 1
 fi
 
-log "OK: 段階 3 通過 (fresh:true + ファイル検索禁止で 7331 が含まれない — 履歴隔離成立)"
+log "OK: 段階 3 通過 (fresh:true + ファイル検索禁止で 7331 非出現 + UNKNOWN 出現 — 履歴隔離成立)"
 
 # --- 最終サマリー ---
 log ""
