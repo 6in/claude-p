@@ -108,7 +108,7 @@
 
 **Gap Closure** *(UAT ギャップ修正 — 06-UAT.md Test 2)*
 
-- [ ] 06-04-PLAN.md — turnId 採番一意化: TurnIdAllocator + HT-PROTOCOL §3.2 -<seq> 連番ガード + 並行採番一意性テスト（PARA-03）
+- [x] 06-04-PLAN.md — turnId 採番一意化: TurnIdAllocator + HT-PROTOCOL §3.2 -<seq> 連番ガード + 並行採番一意性テスト（PARA-03）
 
 ## Progress
 
@@ -119,7 +119,7 @@
 | 3. Testing & CI Automation | v1.0 | 6/6 | Complete | 2026-05-25 |
 | 4. Agent Profile Abstraction | v2.0 | 4/4 | Complete    | 2026-06-11 |
 | 5. Codex CLI and OpenCode Validation | v2.0 | 3/3 | Complete    | 2026-06-15 |
-| 6. Multi-Instance Parallel Foundation | v2.0 | 3/3 | Complete   | 2026-06-15 |
+| 6. Multi-Instance Parallel Foundation | v2.0 | 4/4 | Complete   | 2026-06-15 |
 
 ---
 *Roadmap created: 2026-05-23*

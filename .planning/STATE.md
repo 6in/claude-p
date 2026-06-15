@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: マルチエージェント対応
-status: verifying
-stopped_at: Phase 6 context gathered
-last_updated: "2026-06-15T07:52:50.435Z"
+status: executing
+stopped_at: Completed 06-04-PLAN.md
+last_updated: "2026-06-15T09:31:58.795Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 3
   completed_phases: 3
-  total_plans: 10
-  completed_plans: 10
+  total_plans: 11
+  completed_plans: 11
   percent: 100
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 06 (multi-instance-parallel-foundation) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Plan: 2 of 4
+Status: Ready to execute
 Last activity: 2026-06-15
 
 Progress: [██████████] 100%
@@ -64,6 +64,7 @@ Progress: [██████████] 100%
 | Phase 06-multi-instance-parallel-foundation P01 | 6 | 2 tasks | 3 files |
 | Phase 06-multi-instance-parallel-foundation P02 | 5 | 2 tasks | 3 files |
 | Phase 06-multi-instance-parallel-foundation P03 | 1 | 1 tasks | 1 files |
+| Phase 06-multi-instance-parallel-foundation P04 | 8 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -157,6 +158,7 @@ completed: 2026-06-11
 - [Phase ?]: eval不使用でコマンドインジェクション防止
 - [Phase ?]: agent名一致ポーリングで falsifiable な readiness 確認
 - [Phase ?]: grep-findable なポート別turns分離証跡
+- [Phase ?]: TurnIdAllocator: tokio::sync::Mutex<{last_base,seq}> で HT-PROTOCOL §3.2 衝突時 -<seq> 連番を実装。worker Mutex とは別ロックで CR-01 維持
 
 ## Performance
 
@@ -287,8 +289,8 @@ Items carried forward from v1.0 close (2026-06-10):
 
 ## Session Continuity
 
-Last session: 2026-06-15T07:52:50.417Z
-Stopped at: Phase 6 context gathered
+Last session: 2026-06-15T09:31:58.779Z
+Stopped at: Completed 06-04-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
