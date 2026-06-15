@@ -99,11 +99,17 @@ cmd_up() {
         [[ "$line" =~ ^[[:space:]]*$ ]] && continue
 
         # <agent> <port> [KEY=VALUE ...] をパース
+        # WR-02: 一度だけ配列としてパースし、KEY=VALUE トークンの境界を保持する。
+        # 旧実装は awk で再結合 → tr で空白再分割していたため、値に空白を含む
+        # トークン（例 CODEX_HOME=/home/user/My Configs/.codex）が壊れて
+        # 末尾が捨てられていた。配列スライスでトークン単位を維持する。
         local agent port
-        read -r agent port <<< "$line"
-        # extra_env_tokens: KEY=VALUE トークン列（3列目以降）
-        local extra_tokens
-        extra_tokens=$(echo "$line" | awk '{for(i=3;i<=NF;i++) printf "%s ", $i}' | sed 's/ $//')
+        local fields=()
+        read -ra fields <<< "$line"
+        agent="${fields[0]:-}"
+        port="${fields[1]:-}"
+        # extra_kvs: 3列目以降の KEY=VALUE トークン列（列区切りは空白）
+        local extra_kvs=("${fields[@]:2}")
 
         if [[ -z "$agent" ]] || [[ -z "$port" ]]; then
             log "WARN: 不正な行をスキップします: ${line}"
@@ -138,18 +144,16 @@ cmd_up() {
         # extra_env を export した上でデーモン spawn（T-06-03: eval 不使用、export で逐次適用）
         (
             cd "$WEBIF_DIR"
-            # extra_env_tokens の各 KEY=VALUE を export する（eval なし）
-            if [[ -n "$extra_tokens" ]]; then
-                while IFS= read -r kv; do
-                    [[ -z "$kv" ]] && continue
-                    # KEY=VALUE の形式のみ受け付ける（安全ガード）
-                    if [[ "$kv" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-                        export "$kv"
-                    else
-                        log "WARN: 不正な env トークンをスキップします: ${kv}"
-                    fi
-                done <<< "$(echo "$extra_tokens" | tr ' ' '\n')"
-            fi
+            # extra_kvs の各 KEY=VALUE を export する（eval なし、トークン境界保持）
+            for kv in "${extra_kvs[@]}"; do
+                [[ -z "$kv" ]] && continue
+                # KEY=VALUE の形式のみ受け付ける（安全ガード）
+                if [[ "$kv" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+                    export "$kv"
+                else
+                    log "WARN: 不正な env トークンをスキップします: ${kv}"
+                fi
+            done
             # CR-01: ビルド済みバイナリを直接 spawn する（cargo run ラッパーを挟まない）。
             # $! は ht-webif 本体の PID になり、down-all の SIGTERM/SIGKILL が確実に届く。
             # TURNS_DIR を turns-${port} として spawn（D-16: ポート別 turns ディレクトリ分離）。
