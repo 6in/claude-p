@@ -10,15 +10,25 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
-use tokio::time::Instant;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::mcp::{Mcp, McpClient, Restartable};
 use crate::turn::{build_prompt_body, read_turn, Job};
 use crate::worker::Worker;
+
+/// 起動以降イミュータブルなインスタンス識別情報 + lock-free メトリクス。
+/// worker Mutex を一切取得せず /info ハンドラが直接読む（D-02/D-05）。
+pub struct InstanceInfo {
+    pub agent_name: String,
+    pub port: u16,
+    pub started_at: Instant,
+    pub is_busy: AtomicBool,        // D-02: worker_loop がトグル
+    pub turns_processed: AtomicU64, // D-04: ターン完了ごとにインクリメント
+}
 
 pub struct AppState<M: Mcp + Send + 'static = McpClient> {
     pub worker: Arc<Mutex<Worker<M>>>,
@@ -27,10 +37,33 @@ pub struct AppState<M: Mcp + Send + 'static = McpClient> {
     /// プロファイルは起動後イミュータブルなので Mutex 越しに取得不要。
     /// ターン実行中（worker Mutex 保持中）でも output_covenant を即読めるようにする（CR-01）。
     pub output_covenant: String,
+    /// インスタンス情報は起動後イミュータブル（agent_name/port/started_at）または
+    /// lock-free atomic（is_busy/turns_processed）なので Mutex 不要（D-02/D-05 CR-01 パターン）。
+    pub instance_info: Arc<InstanceInfo>,
 }
 
 pub(crate) fn ise<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+/// GET /info — 稼働中エージェントの識別情報とメトリクスを返す。
+/// worker Mutex を一切取得しない（D-02）。ターン実行中でも即応答する。
+async fn info_handler<M: Mcp + Send + 'static>(
+    State(state): State<Arc<AppState<M>>>,
+) -> Json<Value> {
+    let info = &state.instance_info;
+    let status = if info.is_busy.load(Ordering::Relaxed) {
+        "busy"
+    } else {
+        "idle"
+    };
+    Json(json!({
+        "agent": info.agent_name,
+        "port": info.port,
+        "status": status,
+        "uptime_secs": info.started_at.elapsed().as_secs(),
+        "turns_processed": info.turns_processed.load(Ordering::Relaxed),
+    }))
 }
 
 #[derive(Deserialize)]
@@ -207,6 +240,7 @@ pub fn build_router<M: Mcp + Restartable + Send + 'static>(
         .route("/turns/{turn_id}", get(turn_handler::<M>))
         .route("/command", post(command_handler::<M>))
         .route("/restart", post(restart_handler::<M>))
+        .route("/info", get(info_handler::<M>))
         .layer(cors)
         .with_state(state)
 }
@@ -242,13 +276,74 @@ mod tests {
             profile,
         );
         let worker = Arc::new(Mutex::new(worker));
+        let instance_info = Arc::new(InstanceInfo {
+            agent_name: "claude".to_string(),
+            port: 8080,
+            started_at: Instant::now(),
+            is_busy: AtomicBool::new(false),
+            turns_processed: AtomicU64::new(0),
+        });
         let state = Arc::new(AppState {
             worker,
             turns_dir,
             job_tx,
             output_covenant,
+            instance_info,
         });
         (state, job_rx)
+    }
+
+    // ── GET /info: 5フィールド + 初期値確認 ──
+    //
+    // D-03: GET /info は agent・port・status・uptime_secs・turns_processed の5フィールドを返す。
+    // 初期状態では status="idle"、turns_processed=0。
+    // info_handler は worker Mutex を取得しない（lock-free）。
+    #[tokio::test]
+    async fn info_handler_returns_five_fields_with_initial_values() {
+        let dir = tempdir().unwrap();
+        let (state, _job_rx) = build_test_state(dir.path().to_path_buf());
+        let app = build_router(state, vec!["*".to_string()]);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/info")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK, "GET /info は 200 を返すべき");
+
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let v: Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert_eq!(
+            v.get("agent").and_then(Value::as_str),
+            Some("claude"),
+            "agent フィールドが 'claude' であること"
+        );
+        assert_eq!(
+            v.get("port").and_then(Value::as_u64),
+            Some(8080),
+            "port フィールドが 8080 であること"
+        );
+        assert_eq!(
+            v.get("status").and_then(Value::as_str),
+            Some("idle"),
+            "初期状態では status が 'idle' であること"
+        );
+        assert!(
+            v.get("uptime_secs").and_then(Value::as_u64).is_some(),
+            "uptime_secs フィールドが存在すること"
+        );
+        assert_eq!(
+            v.get("turns_processed").and_then(Value::as_u64),
+            Some(0),
+            "初期状態では turns_processed が 0 であること"
+        );
     }
 
     // ── パストラバーサル拒否 (a): percent-encoded slash 形式 ──
