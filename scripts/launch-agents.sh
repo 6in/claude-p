@@ -131,8 +131,13 @@ cmd_up() {
         # 既存 PID ファイル確認
         if [[ -f "$pid_file" ]]; then
             local existing_pid
-            existing_pid=$(cat "$pid_file")
-            if kill -0 "$existing_pid" 2>/dev/null; then
+            existing_pid=$(cat "$pid_file" 2>/dev/null || true)
+            # WR-05: PID ファイルの内容が数値であることを検証する。空・非数値（部分書き込みや
+            # クラッシュで壊れたファイル）なら破棄して新規起動に進む。
+            if ! [[ "$existing_pid" =~ ^[0-9]+$ ]]; then
+                log "  WARN: 不正な PID ファイルを削除します: ${pid_file} (内容: ${existing_pid:-<empty>})"
+                rm -f "$pid_file"
+            elif kill -0 "$existing_pid" 2>/dev/null; then
                 log "  既に起動済み (pid=${existing_pid})。スキップします。"
                 continue
             else
@@ -262,7 +267,15 @@ cmd_down_all() {
         fi
 
         local pid
-        pid=$(cat "$pid_file")
+        pid=$(cat "$pid_file" 2>/dev/null || true)
+
+        # WR-05: 不正な PID（空・非数値）なら kill に渡さず、ファイルだけ破棄する。
+        # 空 PID を「停止済み」と誤認して生存サーバを放置するのを防ぐ。
+        if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+            log "  WARN: 不正な PID ファイル: ${pid_file} (内容: ${pid:-<empty>}) — 削除します"
+            rm -f "$pid_file"
+            continue
+        fi
 
         if ! kill -0 "$pid" 2>/dev/null; then
             log "  プロセスは既に停止: agent=${agent} port=${port} pid=${pid}"
@@ -326,12 +339,17 @@ cmd_status() {
         # PID 情報
         if [[ -f "$pid_file" ]]; then
             local pid
-            pid=$(cat "$pid_file")
-            echo "  PID:       ${pid}"
-            if kill -0 "$pid" 2>/dev/null; then
-                echo "  PROCESS:   生存"
+            pid=$(cat "$pid_file" 2>/dev/null || true)
+            # WR-05: 非数値 PID は kill -0 に渡さず明示表示する。
+            if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+                echo "  PID:       (不正な PID ファイル: ${pid:-<empty>})"
             else
-                echo "  PROCESS:   死亡（PID ファイルが残存）"
+                echo "  PID:       ${pid}"
+                if kill -0 "$pid" 2>/dev/null; then
+                    echo "  PROCESS:   生存"
+                else
+                    echo "  PROCESS:   死亡（PID ファイルが残存）"
+                fi
             fi
         else
             echo "  PID:       (PID ファイルなし)"
