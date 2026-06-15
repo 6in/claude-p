@@ -92,7 +92,19 @@
   3. 複数インスタンスが同時に稼働中に 100 ターンを並行実行しても、ターンファイルのコリジョンが発生しない（`TURNS_DIR` 分離で自動保証）
   4. README.md に多重インスタンス起動手順・CODEX_HOME 分離手順・クレデンシャル分離ガイドが記載されている
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+- [ ] 06-01-PLAN.md — GET /info エンドポイント: InstanceInfo (lock-free) + info_handler + worker_loop status/counter + main.rs 配線（PARA-01/02）
+
+**Wave 2** *(blocked on Wave 1 — /info readiness に依存)*
+
+- [ ] 06-02-PLAN.md — 多重インスタンス・ランチャー: scripts/launch-agents.sh (up/down-all/status) + instances.conf + justfile レシピ（PARA-03/04）
+
+**Wave 3** *(blocked on Wave 2 — launcher コマンドを文書化)*
+
+- [ ] 06-03-PLAN.md — README 多重インスタンス起動手順 + CODEX_HOME 分離 + クレデンシャル分離ガイド（PARA-04）
 
 ## Progress
 
@@ -103,7 +115,7 @@
 | 3. Testing & CI Automation | v1.0 | 6/6 | Complete | 2026-05-25 |
 | 4. Agent Profile Abstraction | v2.0 | 4/4 | Complete    | 2026-06-11 |
 | 5. Codex CLI and OpenCode Validation | v2.0 | 3/3 | Complete    | 2026-06-15 |
-| 6. Multi-Instance Parallel Foundation | v2.0 | 0/? | Not started | - |
+| 6. Multi-Instance Parallel Foundation | v2.0 | 0/3 | Not started | - |
 
 ---
 *Roadmap created: 2026-05-23*
