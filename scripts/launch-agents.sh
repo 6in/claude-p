@@ -61,7 +61,11 @@ json_get_field() {
 
 # --- Readiness ヘルパー（D-09: /info の agent 名一致ポーリング） ---
 # check_info_agent port expected_agent
-# /info を叩いて agent フィールドが expected_agent と一致すれば return 0。
+# 戻り値（WR-06）:
+#   0 = /info が応答し agent が一致（ready）
+#   1 = /info が未応答 or agent フィールド取得不可（まだ起動中）
+#   2 = /info が応答したが agent が別名（ポート衝突: 別エージェントが使用中）
+# 呼び出し側は 2 を「未応答」ではなく即時ハード失敗として扱うこと。
 check_info_agent() {
     local port="$1"
     local expected_agent="$2"
@@ -72,7 +76,14 @@ check_info_agent() {
     fi
     local actual
     actual=$(json_get_field "$resp" "agent") || return 1
-    [[ "$actual" == "$expected_agent" ]]
+    if [[ -z "$actual" ]]; then
+        return 1
+    fi
+    if [[ "$actual" != "$expected_agent" ]]; then
+        # /info は応答しているが期待エージェントと異なる = ポート衝突
+        return 2
+    fi
+    return 0
 }
 
 # --- up サブコマンド（D-07/D-08: 設定ファイル駆動の一括起動 + readiness 確認） ---
@@ -210,9 +221,20 @@ cmd_up() {
                 continue 2
             fi
 
-            if check_info_agent "$port" "$agent"; then
+            # WR-06: 戻り値を捕捉し、別エージェント衝突（2）は即時ハード失敗にする。
+            local check_rc=0
+            check_info_agent "$port" "$agent" || check_rc=$?
+            if [[ $check_rc -eq 0 ]]; then
                 log "  起動完了: agent=${agent} port=${port} pid=${pid} turns_dir=${turns_dir}"
                 break
+            elif [[ $check_rc -eq 2 ]]; then
+                log "ERROR: port ${port} は別エージェントが使用中です（期待: ${agent}）。ポート衝突のため起動を中止します。"
+                # 起動した可能性のある自プロセスは別ポート衝突なので触らない（衝突相手は別インスタンス）。
+                # 自分が spawn した pid のみ後始末する。
+                kill -TERM "$pid" 2>/dev/null || true
+                rm -f "$pid_file"
+                failures=$((failures + 1))
+                continue 2
             fi
 
             if (( i % 10 == 0 )); then
@@ -221,8 +243,15 @@ cmd_up() {
             sleep 1
         done
 
-        if ! check_info_agent "$port" "$agent"; then
-            log "ERROR: 60 秒待ってもインスタンスが応答しませんでした (agent=${agent} port=${port})"
+        # 最終確認（タイムアウト判定）。WR-06: ここでも 2 を衝突として区別する。
+        local final_rc=0
+        check_info_agent "$port" "$agent" || final_rc=$?
+        if [[ $final_rc -ne 0 ]]; then
+            if [[ $final_rc -eq 2 ]]; then
+                log "ERROR: port ${port} は別エージェントが使用中です（期待: ${agent}）。ポート衝突。"
+            else
+                log "ERROR: 60 秒待ってもインスタンスが応答しませんでした (agent=${agent} port=${port})"
+            fi
             if [[ -f "$log_file" ]]; then
                 log "ログ末尾 20 行:"
                 tail -n 20 "$log_file" >&2
