@@ -135,9 +135,7 @@ impl<M: Mcp + Send> Worker<M> {
             let snap = self.client.snapshot(&new_id).await?;
             if snap.contains(&ready_pattern) {
                 if settle_ms > 0 {
-                    eprintln!(
-                        "[worker] ready_pattern 検出 → 落ち着き待機 {settle_ms}ms"
-                    );
+                    eprintln!("[worker] ready_pattern 検出 → 落ち着き待機 {settle_ms}ms");
                     tokio::time::sleep(Duration::from_millis(settle_ms)).await;
                 }
                 break;
@@ -181,9 +179,7 @@ impl<M: Mcp + Restartable + Send> Worker<M> {
             let snap = self.client.snapshot(&new_id).await?;
             if snap.contains(&ready_pattern) {
                 if settle_ms > 0 {
-                    eprintln!(
-                        "[worker] ready_pattern 検出 → 落ち着き待機 {settle_ms}ms"
-                    );
+                    eprintln!("[worker] ready_pattern 検出 → 落ち着き待機 {settle_ms}ms");
                     tokio::time::sleep(Duration::from_millis(settle_ms)).await;
                 }
                 break;
