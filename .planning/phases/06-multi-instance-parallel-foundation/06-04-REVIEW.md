@@ -12,7 +12,15 @@ findings:
   warning: 3
   info: 1
   total: 5
-status: issues_found
+status: clean
+resolved_in: 6bf2f98
+resolved_at: 2026-06-15
+findings_resolved:
+  - CR-01
+  - WR-01
+  - WR-02
+  - WR-03
+  - IN-01
 ---
 
 # Phase 06 / Plan 06-04: Code Review Report (turnId collision fix)
