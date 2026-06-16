@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 Phase: 06 (multi-instance-parallel-foundation) — EXECUTING
 Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-06-16 - Completed quick task 260616-fce: ma-client.sh multi-agent client
+Last activity: 2026-06-16 - Completed quick task 260616-g9y: ma-doctor.sh environment diagnostics
 
 Progress: [██████████] 100%
 
@@ -281,6 +281,7 @@ None yet.
 | 260615-t7k | ht-webif を PATH 配布可能なポータブルツール化（agents 探索 precedence + cwd 基準 instances.conf + `just install` + docs） | 2026-06-15 | c6eda7a | [260615-t7k-make-ht-webif-a-portable-path-installabl](./quick/260615-t7k-make-ht-webif-a-portable-path-installabl/) |
 | 260616-edb | agents/*.toml に `[env]` テーブル追加 — spawn 時に環境変数を注入（未設定キーのみの既定値、ht-mcp 子へ継承、respawn でも再利用） | 2026-06-16 | 3668892 | [260616-edb-agents-toml-env-spawn](./quick/260616-edb-agents-toml-env-spawn/) |
 | 260616-fce | `scripts/ma-client.sh` 新規 — エージェント名でプロンプト送信する薄い curl ラッパー（send 同期既定/--async、result、status、just install 同梱） | 2026-06-16 | 3885efe | [260616-fce-ma-client-sh](./quick/260616-fce-ma-client-sh/) |
+| 260616-g9y | `scripts/ma-doctor.sh` 新規 — 動作環境の report-only フル診断（PATH/依存/agents/認証/claude信頼/instances/稼働、OK/WARN/FAIL、just install 同梱） | 2026-06-16 | cc288b2 | [260616-g9y-ma-doctor-sh](./quick/260616-g9y-ma-doctor-sh/) |
 
 ## Deferred Items
 
