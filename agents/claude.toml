@@ -33,3 +33,7 @@ trigger_template = "{prompt_path} を読んで、その指示に従ってくだ�
 # モデル選択（コメントアウト例 — 使用する場合は両方指定）
 # model_flag = "--model"
 # model_value = "opus"
+
+# 環境変数の注入（任意・未設定キーのみ適用される既定値、リテラルのみ）
+# [env]
+# MY_VAR = "value"

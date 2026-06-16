@@ -66,3 +66,8 @@ turn_timeout_secs = 300
 # モデル選択（コメントアウト例 — 省略時は ~/.codex/config.toml の model = "gpt-5.5" が使われる）
 # model_flag = "--model"
 # model_value = "gpt-4o"
+
+# [env] で環境変数を spawn 時に注入できる（未設定キーのみ適用＝既定値、リテラルのみ・展開なし）。
+# 例: CODEX_HOME を [env] でも指定できる（instances.conf KEY=VALUE が設定済みならそちらが優先）。
+# [env]
+# CODEX_HOME = "/home/youruser/.codex-inst1"

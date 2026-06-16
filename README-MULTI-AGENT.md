@@ -60,6 +60,10 @@ AGENT=opencode ht-webif   # agents/opencode.toml を読む
 | `turn_timeout_secs` | 1 ターンのタイムアウト秒（省略時デフォルトあり） |
 | `startup_settle_ms` | ready 検出後の落ち着き待機ミリ秒 |
 | `model_flag` / `model_value` | モデル選択フラグ（使う場合は両方指定） |
+| `[env]` | spawn 時に ht-mcp 子プロセスへ注入する環境変数マップ（既定値）。既存 env（instances.conf / ambient）に存在するキーは上書きしない。値はリテラルのみ（${VAR} 展開なし） |
+
+`instances.conf` の `KEY=VALUE` は launcher が ht-webif の env に export し、それが既存値として profile `[env]` より優先される。
+profile `[env]` は未設定キーの既定値として働く（`instances.conf` > profile `[env]`）。
 
 > 出力規約（`output_covenant`）と完了検知（`status` ファイル＝センチネル）の意味論は
 > [HT-PROTOCOL.md](HT-PROTOCOL.md) に準拠します。エージェントが変わっても

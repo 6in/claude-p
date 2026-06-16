@@ -202,6 +202,8 @@ PORT=8082 TURNS_DIR=./turns-8082 AGENT=claude cargo run --release
 
 ht-webif はエージェントプロファイル（`agents/<name>.toml`）を追加するだけで任意の対話型 CLI エージェントを使用できる（TOML 追加のみ、Rust リビルド不要）。
 
+`agents/<name>.toml` に `[env]` テーブルを書くと、spawn 時に ht-mcp 子プロセスへ環境変数を既定値として注入できる（未設定キーのみ・リテラルのみ、`instances.conf` の `KEY=VALUE` が設定済みならそちらが優先）。Codex の `CODEX_HOME` 分離も `[env]` で宣言的に設定できる（ただし `instances.conf` 記述が優先される）。
+
 ### Codex CLI（OpenAI）
 
 **前提条件:**
