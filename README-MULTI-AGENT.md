@@ -276,6 +276,54 @@ curl -s http://127.0.0.1:8080/turns/20260616-103045-123
 > ロードバランス例: 送信前に各ポートの `GET /info` を見て `status:"idle"` のインスタンスを
 > 選べば、空いているエージェントへ振り分けられます（`status` セマンティクスは §4 参照）。
 
+### ma-client.sh を使う（ポート番号不要の薄いラッパ）
+
+`just install` 済みなら `ma-client.sh` が PATH（`~/.local/bin`）に配置されます。
+エージェント名を指定するだけで `instances.conf` からポートを自動解決するため、
+ポート番号を覚えなくてもプロンプトを送れます。
+
+```bash
+# (a) 同期送信（既定）— 完了まで待ち result 本文を stdout に出力
+ma-client.sh claude -p "Rust とは何か 100 字で"
+
+# positional 引数でも同じ（後方互換）
+ma-client.sh claude "Rust とは何か 100 字で"
+
+# (b) 非同期（--async）— turn_id を即表示し、後でポーリング可能
+ma-client.sh claude -p "..." --async
+# → 20260616-103045-123
+
+# (c) turn_id で結果を取得（GET /turns）
+ma-client.sh result claude 20260616-103045-123
+# → status: done のとき result 本文を表示
+
+# (d) 全インスタンスの /info 一覧を表示
+ma-client.sh status
+
+# (e) ポート直打ちで上書き（--port）
+ma-client.sh claude -p "..." --port 9090
+
+# (f) fresh:true を付加（文脈リセット、-p 相当の一発実行）
+ma-client.sh claude -p "今日の日付は？" --fresh
+
+# stdin パイプ（長文プロンプト向け）
+cat my-prompt.txt | ma-client.sh codex
+```
+
+`--async` で投げた場合は、返ってきた `turn_id` を `result` サブコマンドで回収します:
+
+```bash
+turn_id=$(ma-client.sh claude -p "..." --async)
+# ... 処理 ...
+ma-client.sh result claude "$turn_id"
+```
+
+ポイント:
+- エージェント名 → ポート番号の解決は `$(pwd)/instances.conf` を参照します。
+  curl で直打ちする場合との対応: `ma-client.sh claude` = `curl http://127.0.0.1:8080`（`instances.conf` の claude 行が `8080` の場合）。
+- プロンプトの JSON エンコードは `jq` 優先・`python3` フォールバックで安全化します（引用符・改行・スラッシュも OK）。
+- 接続先は常に `127.0.0.1` 固定（リモート送信なし）。
+
 ---
 
 ## 6. turnId 採番の一意化 — Phase 6（06-04 ギャップクローズ）

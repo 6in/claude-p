@@ -268,9 +268,13 @@ bash scripts/e2e-opencode.sh
 > **Codex 多重インスタンス:** `CODEX_HOME` 分離が必須。手順は §複数インスタンス運用 → クレデンシャル分離ガイドを参照。
 > **OpenCode 多重インスタンス:** `~/.config/opencode/` は read-only 参照のため分離不要（Phase 6 実機検証済み）。
 
-## claude-p — curl 不要の薄いラッパ
+## ma-client.sh — マルチエージェント版の薄いラッパ
 
-`POST /prompt` を毎回 curl で書く代わりに、`claude-p {port} {prompt}` 一発でターン投入＋結果取得まで完結させるラッパスクリプト。指定ポートにサーバが居なければ自動でデーモン化起動し、既に居れば再利用する。
+`just install` 済みなら `ma-client.sh <agent> -p "..."` で agent 名（`instances.conf` の port を自動解決）宛に同期送信できます。ポート番号を指定せずエージェント名で操作でき、`result`/`status` サブコマンドでターン結果取得・全インスタンス状態確認も可能。`launch-agents.sh up` で立てた複数インスタンスへの一括管理向け。詳細は [README-MULTI-AGENT.md §5](README-MULTI-AGENT.md#5-多重インスタンス一括起動--phase-6) を参照。
+
+## claude-p — curl 不要の薄いラッパ（単一インスタンス向け）
+
+`POST /prompt` を毎回 curl で書く代わりに、`claude-p {port} {prompt}` 一発でターン投入＋結果取得まで完結させるラッパスクリプト。指定ポートにサーバが居なければ自動でデーモン化起動し、既に居れば再利用する。マルチエージェント環境では `ma-client.sh` を使うことを推奨（エージェント名で宛先を指定できる）。
 
 ### 基本使い方
 
