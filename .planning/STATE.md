@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 Phase: 06 (multi-instance-parallel-foundation) — EXECUTING
 Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-06-15 - Completed quick task 260615-t7k: ht-webif portable PATH-installable launcher
+Last activity: 2026-06-16 - Completed quick task 260616-edb: agents/*.toml [env] spawn injection
 
 Progress: [██████████] 100%
 
@@ -279,6 +279,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260615-t7k | ht-webif を PATH 配布可能なポータブルツール化（agents 探索 precedence + cwd 基準 instances.conf + `just install` + docs） | 2026-06-15 | c6eda7a | [260615-t7k-make-ht-webif-a-portable-path-installabl](./quick/260615-t7k-make-ht-webif-a-portable-path-installabl/) |
+| 260616-edb | agents/*.toml に `[env]` テーブル追加 — spawn 時に環境変数を注入（未設定キーのみの既定値、ht-mcp 子へ継承、respawn でも再利用） | 2026-06-16 | 3668892 | [260616-edb-agents-toml-env-spawn](./quick/260616-edb-agents-toml-env-spawn/) |
 
 ## Deferred Items
 
