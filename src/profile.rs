@@ -37,6 +37,11 @@ pub struct AgentProfile {
     pub model_flag: Option<String>,
     /// モデル選択値（例: "opus"）。model_flag とセットで指定
     pub model_value: Option<String>,
+    /// エージェント spawn 時に ht-mcp 子プロセスへ注入する環境変数の既定値マップ。
+    /// 既存 env（instances.conf / ambient）に存在するキーは上書きしない。
+    /// リテラルのみ・${VAR} 展開なし。
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
 }
 
 fn default_startup_timeout() -> u64 {
@@ -391,6 +396,52 @@ model_flag = "--model"
             profile.spawn_command(),
             vec!["claude"],
             "model_flag のみ指定では spawn コマンドに追加されないこと（D-13）"
+        );
+    }
+
+    // (i) [env] セクションなしの TOML をパースすると env が空マップになる（後方互換）
+    #[test]
+    fn env_defaults_to_empty_when_absent() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("noenv.toml"), minimal_valid_toml()).unwrap();
+        let profile = load_agent_profile("noenv", dir.path()).unwrap();
+        assert!(
+            profile.env.is_empty(),
+            "[env] なし TOML では env が空マップであること"
+        );
+    }
+
+    // (i2) [env] テーブル付き TOML をパースすると env に正しい値が入る
+    #[test]
+    fn env_table_parses_into_map() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("withenv.toml"),
+            r#"
+command = ["claude"]
+ready_pattern = "auto mode"
+fresh_mode = "command"
+clear_command = "/clear"
+output_covenant = "x {result_path} {status_path}"
+trigger_template = "{prompt_path}"
+
+[env]
+FOO = "bar"
+BAZ = "qux"
+"#,
+        )
+        .unwrap();
+        let profile = load_agent_profile("withenv", dir.path()).unwrap();
+        assert_eq!(profile.env.len(), 2, "env に 2 エントリが入ること");
+        assert_eq!(
+            profile.env.get("FOO").map(String::as_str),
+            Some("bar"),
+            "FOO の値が 'bar' であること"
+        );
+        assert_eq!(
+            profile.env.get("BAZ").map(String::as_str),
+            Some("qux"),
+            "BAZ の値が 'qux' であること"
         );
     }
 }

@@ -266,6 +266,7 @@ mod tests {
             turn_timeout_secs: 2,
             model_flag: None,
             model_value: None,
+            env: std::collections::HashMap::new(),
         }
     }
 

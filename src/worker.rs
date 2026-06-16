@@ -35,7 +35,8 @@ impl Worker<McpClient> {
         ht_mcp_path: &str,
         profile: &AgentProfile,
     ) -> Result<(McpClient, String)> {
-        let mut client = McpClient::spawn(ht_mcp_path).await?;
+        // profile.env を ht-mcp 子プロセスへ既定値として注入
+        let mut client = McpClient::spawn(ht_mcp_path, &profile.env).await?;
         client.handshake().await?;
         let session_id = Self::spawn_session(&mut client, profile).await?;
         Ok((client, session_id))
