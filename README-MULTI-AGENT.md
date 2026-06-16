@@ -326,7 +326,63 @@ ma-client.sh result claude "$turn_id"
 
 ---
 
-## 6. turnId 採番の一意化 — Phase 6（06-04 ギャップクローズ）
+## 6. 動作環境の診断（ma-doctor.sh）
+
+### 概要
+
+`ma-doctor.sh` は report-only のフル診断ツールです。
+書き込みは一切しません（`~/.claude.json` / `PATH` / 設定ファイルへの書き込みなし）。
+FAIL が 1 つでもあれば exit 1、無ければ（WARN のみ含む）exit 0 を返します。
+
+### 実行方法
+
+```bash
+# just install 後（PATH に ma-doctor.sh がある場合）
+ma-doctor.sh
+
+# リポジトリ内から直接実行
+bash scripts/ma-doctor.sh
+
+# ヘルプ表示
+ma-doctor.sh --help
+```
+
+### チェック内容（8 セクション）
+
+| # | セクション | 確認内容 |
+|---|-----------|---------|
+| 1 | インストール/PATH | `ht-webif` / `launch-agents.sh` / `ma-client.sh` の存在確認、`~/.local/bin` の PATH 登録確認 |
+| 2 | 依存コマンド | `ht-mcp` / `curl` の存在確認、`jq` または `python3` の JSON エンコーダ確認 |
+| 3 | agents プロファイル解決 | `AGENTS_DIR` > `./agents/` > XDG グローバルの探索順で有効 dir を確認し、`*.toml` を列挙 |
+| 4 | エージェントバイナリ | 各プロファイルの `command[0]` の存在確認（bash ラッパーはスクリプト存在も確認） |
+| 5 | 認証/セットアップ | claude 認証（`~/.claude/.credentials.json`）/ codex 認証（`auth.json`）/ opencode 前提ファイル |
+| 6 | claude フォルダ信頼 | `~/.claude.json` の `hasTrustDialogAccepted` を read-only パースして確認 |
+| 7 | instances.conf | 書式・重複ポート・エージェントプロファイル解決可否を確認 |
+| 8 | 稼働インスタンス | `instances.conf` の各エントリへ `/info` を curl して応答確認 |
+
+各セクションの各チェックは `[OK]` / `[WARN]` / `[FAIL]` で表示され、末尾に `診断結果: OK=N WARN=N FAIL=N` のサマリが出ます。
+
+### よくある FAIL/WARN と対処
+
+| 症状 | 対処 |
+|------|------|
+| `ht-webif`/`launch-agents.sh`/`ma-client.sh` が見つからない | `just install` を実行する |
+| `~/.local/bin` が PATH にない | `export PATH="$HOME/.local/bin:$PATH"` を `~/.bashrc` 等に追加 |
+| `~/.claude/.credentials.json` がない | `claude` に Max サブスクリプションでログイン（`claude auth login`） |
+| `~/.codex/auth.json` がない（または CODEX_HOME 指定先） | `codex login` を実行する |
+| opencode 前提ファイル（`turn.md` / `opencode.json`）がない | `bash scripts/setup-opencode.sh` を実行する |
+| claude フォルダが未登録または信頼ダイアログが未承認 | 新規ディレクトリでは `claude` を起動して信頼ダイアログを承認する |
+| agents ディレクトリが見つからない | `AGENTS_DIR` を設定するか `./agents` を配置するか `just install` を実行する |
+
+### 運用注意（トラブルシュート）
+
+- **新しいスクリプトを追加した後は `just install` を再実行**してください（`~/.local/bin` への再コピーが必要）。
+- **新規ディレクトリで実行する場合は claude フォルダ信頼が必要**です。`claude` を当該ディレクトリで起動して信頼ダイアログを承認してください。
+- `ma-doctor.sh` はあくまで診断専用です。修正は各ヒントに従って手動で行ってください（`--fix` オプションはありません）。
+
+---
+
+## 7. turnId 採番の一意化 — Phase 6（06-04 ギャップクローズ）
 
 ### 解決した問題
 
@@ -367,7 +423,7 @@ UAT で、**同一インスタンスへ同一ミリ秒に並行 `POST /prompt`**
 
 ---
 
-## 7. 関連ファイル早見表
+## 8. 関連ファイル早見表
 
 | 対象 | パス |
 |------|------|
@@ -376,6 +432,8 @@ UAT で、**同一インスタンスへ同一ミリ秒に並行 `POST /prompt`**
 | E2E スクリプト | `scripts/e2e-codex.sh`, `scripts/e2e-opencode.sh` |
 | 多重インスタンス設定 | `instances.conf` |
 | 起動オーケストレータ | `scripts/launch-agents.sh`（`up` / `down-all` / `status`） |
+| マルチエージェント curl ラッパー | `scripts/ma-client.sh`（エージェント名でプロンプト送信） |
+| 動作環境診断ツール | `scripts/ma-doctor.sh`（report-only フル診断、8 セクション） |
 | just レシピ | `justfile`（`up-all` / `down-all` / `agents-status`） |
 | `/info` / `TurnIdAllocator` 実装 | `src/http.rs` |
 | ワイヤープロトコル仕様 | [HT-PROTOCOL.md](HT-PROTOCOL.md) |

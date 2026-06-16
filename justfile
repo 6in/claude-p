@@ -120,10 +120,13 @@ install:
     chmod +x "$HOME/.local/bin/launch-agents.sh"
     cp scripts/ma-client.sh "$HOME/.local/bin/ma-client.sh"
     chmod +x "$HOME/.local/bin/ma-client.sh"
+    cp scripts/ma-doctor.sh "$HOME/.local/bin/ma-doctor.sh"
+    chmod +x "$HOME/.local/bin/ma-doctor.sh"
     echo "インストール完了:"
     echo "  $HOME/.local/bin/ht-webif"
     echo "  $HOME/.local/bin/launch-agents.sh"
     echo "  $HOME/.local/bin/ma-client.sh"
+    echo "  $HOME/.local/bin/ma-doctor.sh"
 
     # agents/*.toml を XDG グローバルにコピー（既存ファイルは上書き）
     # D-02: XDG_CONFIG_HOME 尊重（未設定時は HOME/.config）
@@ -156,7 +159,7 @@ install:
 uninstall:
     #!/usr/bin/env bash
     set -euo pipefail
-    rm -f "$HOME/.local/bin/ht-webif" "$HOME/.local/bin/launch-agents.sh" "$HOME/.local/bin/ma-client.sh"
-    echo "アンインストール完了: ~/.local/bin/ht-webif, ~/.local/bin/launch-agents.sh, ~/.local/bin/ma-client.sh を削除しました"
+    rm -f "$HOME/.local/bin/ht-webif" "$HOME/.local/bin/launch-agents.sh" "$HOME/.local/bin/ma-client.sh" "$HOME/.local/bin/ma-doctor.sh"
+    echo "アンインストール完了: ~/.local/bin/ht-webif, ~/.local/bin/launch-agents.sh, ~/.local/bin/ma-client.sh, ~/.local/bin/ma-doctor.sh を削除しました"
     echo "注意: agents グローバル（${XDG_CONFIG_HOME:-$HOME/.config}/claude-p/agents）は削除しませんでした。"
     echo "  手動で削除する場合: rm -rf \"${XDG_CONFIG_HOME:-$HOME/.config}/claude-p/agents\""

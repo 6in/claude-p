@@ -272,6 +272,8 @@ bash scripts/e2e-opencode.sh
 
 `just install` 済みなら `ma-client.sh <agent> -p "..."` で agent 名（`instances.conf` の port を自動解決）宛に同期送信できます。ポート番号を指定せずエージェント名で操作でき、`result`/`status` サブコマンドでターン結果取得・全インスタンス状態確認も可能。`launch-agents.sh up` で立てた複数インスタンスへの一括管理向け。詳細は [README-MULTI-AGENT.md §5](README-MULTI-AGENT.md#5-多重インスタンス一括起動--phase-6) を参照。
 
+動作環境の診断は `ma-doctor.sh`（`just install` 後は `ma-doctor.sh` で実行、リポジトリ内では `bash scripts/ma-doctor.sh`）を参照（report-only フル診断、8 セクション、詳細は [README-MULTI-AGENT.md §6](README-MULTI-AGENT.md#6-動作環境の診断ma-doctorsh)）。
+
 ## claude-p — curl 不要の薄いラッパ（単一インスタンス向け）
 
 `POST /prompt` を毎回 curl で書く代わりに、`claude-p {port} {prompt}` 一発でターン投入＋結果取得まで完結させるラッパスクリプト。指定ポートにサーバが居なければ自動でデーモン化起動し、既に居れば再利用する。マルチエージェント環境では `ma-client.sh` を使うことを推奨（エージェント名で宛先を指定できる）。
