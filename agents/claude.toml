@@ -24,11 +24,16 @@ output_covenant = """
 status ファイルが完了検知シグナルです。必ず result を書き終えてから最後に status を書いてください。"""
 
 # トリガーメッセージテンプレート。{prompt_path} プレースホルダが必須。
-trigger_template = "{prompt_path} を読んで、その指示に従ってください。"
+# 重要: Claude Code は行頭 '/' をスラッシュコマンドとして解釈するため、
+# {prompt_path}（絶対パス = '/' 始まり）を先頭に置くとトリガーが送信されない。
+# 必ず {prompt_path} を文中（先頭以外）に置くこと。
+trigger_template = "次のファイルを読み、その指示に従って実行してください: {prompt_path}"
 
 # チューニング値（未指定なら以下のデフォルトが使われる）
-# startup_timeout_secs = 25
-# turn_timeout_secs = 300
+startup_timeout_secs = 30
+# GSD の plan/execute/verify は researcher+planner+checker を回すため 5分では足りない。
+# 30分（=moonlighting 外側ポーリングと同等）まで許容する。
+turn_timeout_secs = 1800
 
 # モデル選択（コメントアウト例 — 使用する場合は両方指定）
 # model_flag = "--model"

@@ -1,0 +1,21 @@
+# agents/opus.toml
+# Claude Code（claude CLI）を Opus モデルで起動するプロファイル。
+# moonlighting の plan / verify ロール用（強いモデル）。
+
+command = ["claude"]
+ready_pattern = "auto mode"
+fresh_mode = "command"
+clear_command = "/clear"
+
+output_covenant = """
+【ht-webif 出力規約】上のタスクを実行し、次のとおりファイルに書き出してください:
+1. 回答本文を次のファイルに書く: {result_path}
+2. 完了したら最後に次のファイルを作る: {status_path}
+   中身は JSON 1行: {"status":"done"}（失敗時は {"status":"failed","error":"理由"}）
+status ファイルが完了検知シグナルです。必ず result を書き終えてから最後に status を書いてください。"""
+
+trigger_template = "{prompt_path} を読んで、その指示に従ってください。"
+
+# モデル選択: Opus
+model_flag = "--model"
+model_value = "opus"

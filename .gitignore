@@ -27,6 +27,7 @@ node_modules/
 .vscode/
 *.swp
 *.swo
+work/
 
 # OS 生成物
 .DS_Store

@@ -170,6 +170,15 @@ cmd_up() {
                     log "WARN: 不正な env トークンをスキップします: ${kv}"
                 fi
             done
+            # ht-webif は driven な claude TUI を spawn する。親が Claude Code セッション
+            # （例: gsd-moonlighting を Claude から起動）だと CLAUDECODE / CLAUDE_CODE_* /
+            # CLAUDE_CODE_SESSION_ID / CLAUDE_CODE_CHILD_SESSION が漏れ継承され、driven claude が
+            # 「ネストした子セッション」と誤認して通常の対話ターンを開始しない（プロンプト未処理）。
+            # spawn 前に親の Claude Code セッション系 env をスクラブする（auth 用 CLAUDE_CONFIG_DIR
+            # 等は CLAUDE_CODE_ プレフィックスに含まれないため温存される）。
+            while IFS='=' read -r _k _; do unset "$_k"; done \
+                < <(env | grep -E '^(CLAUDECODE=|CLAUDE_CODE_|CLAUDE_EFFORT=|AI_AGENT=|CLAUDE_PLUGIN_DATA=)')
+
             # D-04: PATH から発見したバイナリを直接 spawn する（cargo run ラッパーを挟まない）。
             # $! は ht-webif 本体の PID になり、down-all の SIGTERM/SIGKILL が確実に届く。
             # TURNS_DIR を cwd 基準の絶対パスで注入（D-16: ポート別 turns ディレクトリ分離）。
