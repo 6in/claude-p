@@ -32,8 +32,9 @@ trigger_template = "次のファイルを読み、その指示に従って実行
 # チューニング値（未指定なら以下のデフォルトが使われる）
 startup_timeout_secs = 30
 # GSD の plan/execute/verify は researcher+planner+checker を回すため 5分では足りない。
-# 30分（=moonlighting 外側ポーリングと同等）まで許容する。
-turn_timeout_secs = 1800
+# turn.rs は 1 ターンを最大 2 回試行する（タイムアウトごとに respawn）。実効上限は
+# turn_timeout_secs × 2。execute をフルで 1 試行に収めるため 90 分/試行に設定。
+turn_timeout_secs = 5400
 
 # モデル選択（コメントアウト例 — 使用する場合は両方指定）
 # model_flag = "--model"
