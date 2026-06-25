@@ -182,7 +182,12 @@ cmd_up() {
             # D-04: PATH から発見したバイナリを直接 spawn する（cargo run ラッパーを挟まない）。
             # $! は ht-webif 本体の PID になり、down-all の SIGTERM/SIGKILL が確実に届く。
             # TURNS_DIR を cwd 基準の絶対パスで注入（D-16: ポート別 turns ディレクトリ分離）。
+            # CLAUDE_CODE_NO_FLICKER=1: 上のスクラブで CLAUDE_CODE_* を全消去した後、driven claude
+            # 用にこれだけ再注入する。Claude Code v2.1.193+ は未設定だと初回に「Try the new
+            # fullscreen renderer?」オンボーディング選択を表示し、TUI が ready に到達せず ht-webif の
+            # readiness がタイムアウト → 起動失敗する（trust ダイアログと同類の footgun）。事前選択で抑止。
             nohup env PORT="${port}" TURNS_DIR="$(pwd)/turns-${port}" AGENT="${agent}" \
+                CLAUDE_CODE_NO_FLICKER="1" \
                 "$server_bin" >"${log_file}" 2>&1 &
             local pid=$!
             echo "$pid" > "${pid_file}"
