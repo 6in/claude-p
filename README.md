@@ -24,6 +24,7 @@ HTTP リクエストを受けた WebIF は `turns/` に `prompt-<turnId>.txt` �
 - **Rust toolchain**: edition 2021 をサポートする stable Rust（`rustup` でインストール）
 - **`ht-mcp` バイナリ**: 別途インストール済みで PATH 上にあるか、`HT_MCP_PATH` 環境変数でパスを指定すること。参考例: `/home/parallels/.cargo/bin/ht-mcp`
 - **`claude` CLI**: PATH 上にあり、**Max サブスクリプションで既にログイン済み**であること（`~/.claude/.credentials.json` の OAuth 認証情報に依存）。**`ANTHROPIC_API_KEY` は使用しない**（これが Core Value の根拠）
+- **trust ダイアログの抑制**: 駆動エージェントは ht-webif が**初めて開くディレクトリ**で起動することが多い（git worktree、未訪問の作業 dir 等）。Claude Code は初回フォルダで「Do you trust the files in this folder?」を出し、出ると駆動 claude はそこで固まって**ターンを処理できず no-op** になる。`~/.claude/settings.json` に **`"skipAutoPermissionPrompt": true`**（必要に応じ `"skipDangerousModePermissionPrompt": true`）を設定して trust/onboarding プロンプトを抑制しておくこと。worktree 固有ではなく、**未 trust の新規 dir 全般**で必要。
 - **POSIX-like OS**: ファイルの atomic rename（`.tmp` → 本名）を前提とする（[HT-PROTOCOL.md](./HT-PROTOCOL.md) v1.1 §6）
 
 ## インストール（PATH 配布）
