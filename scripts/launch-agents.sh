@@ -120,7 +120,11 @@ cmd_up() {
         agent="${fields[0]:-}"
         port="${fields[1]:-}"
         # extra_kvs: 3列目以降の KEY=VALUE トークン列（列区切りは空白）
-        local extra_kvs=("${fields[@]:2}")
+        # bash 3.2 (macOS /bin/bash) は set -u 下で空配列の "${arr[@]}" 展開を
+        # unbound variable 扱いする（bash 4.4 で修正）。3列目が無い行では空スライスに
+        # なるため、長さガードで空配列を明示的に作って後段の展開を安全にする。
+        local extra_kvs=()
+        [ "${#fields[@]}" -gt 2 ] && extra_kvs=("${fields[@]:2}")
 
         if [[ -z "$agent" ]] || [[ -z "$port" ]]; then
             log "WARN: 不正な行をスキップします: ${line}"
@@ -161,7 +165,8 @@ cmd_up() {
         # D-03: ユーザの cwd を維持する（cd しない）。TURNS_DIR は絶対パスで明示する。
         (
             # extra_kvs の各 KEY=VALUE を export する（eval なし、トークン境界保持）
-            for kv in "${extra_kvs[@]}"; do
+            # ${arr[@]+"${arr[@]}"} は bash 3.2 でも空配列を安全に展開する（set -u 対応）。
+            for kv in ${extra_kvs[@]+"${extra_kvs[@]}"}; do
                 [[ -z "$kv" ]] && continue
                 # KEY=VALUE の形式のみ受け付ける（安全ガード）
                 if [[ "$kv" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
